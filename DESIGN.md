@@ -180,6 +180,87 @@ metadata rather than trying to localize video.
 LJ-hosted images (`pics.livejournal.com`, userpic hosts) are not a special case
 — they're ordinary images that happen to be the most likely to still resolve.
 
+**Measured against the real archive** (1,547 entries, 6,333 comment bodies), so
+these are facts rather than estimates:
+
+|                                 | Count                       |
+| ------------------------------- | --------------------------- |
+| Inline `<img>`                  | 608 refs, 421 distinct URLs |
+| `<a href>` straight at an image | 41 refs                     |
+| Embeds (kept as links)          | 34                          |
+| Entries containing images       | 122 of 1,547                |
+| Comments containing images      | 107                         |
+| Distinct hosts                  | **161**                     |
+| `alt` text present              | **24 of 608**               |
+
+Two consequences. The corpus is **much smaller than the brief implied** — 421
+distinct images, not thousands, so M2's runtime is minutes. And the
+"dead-image placeholder carries the corpse" plan is thinner than hoped: 2000s LJ
+users didn't write `alt` text, so the placeholder is mostly URL + date.
+
+**Host concentration is what makes poison detection work**, and the shape of it
+is the whole design input:
+
+| Rank | Refs    | What it is                                                       |
+| ---- | ------- | ---------------------------------------------------------------- |
+| 1    | 183     | A webcomic site                                                  |
+| 2    | **142** | A free image host of the era — the canonical hotlink-ransom case |
+| 3    | 33      | An ISP's personal-pages service, long since shut down            |
+| 4    | 25      | LJ's own image host — the most likely to still resolve           |
+
+Hostnames are deliberately **not** recorded here. The design needs the
+distribution — one host carrying 142 refs is what makes collapse detectable —
+and never the names. A list of the sites someone linked images from across a
+decade is a fingerprint of what they read, and it buys this document nothing.
+Same rule as the fixtures (§5.4): the detector keys on collapse, never on
+identity, so nothing that describes it should know a hostname either.
+
+### 5.3 LJ's own markup
+
+**Not in the original design at all, and found only by surveying the real
+corpus.** 111 bodies carry LJ-namespace tags that mean nothing to a browser:
+
+| Tag             | Uses                         | If ignored                             |
+| --------------- | ---------------------------- | -------------------------------------- |
+| `<lj user="…">` | 204, **193 distinct people** | 204 mentions of people silently vanish |
+| `<lj-cut>`      | 73                           | The read-more marker is lost           |
+| `<lj-embed>`    | 28                           | Embed reference lost                   |
+| `<lj-poll->`    | 3                            | Poll lost                              |
+| `<lj-template>` | 1                            | —                                      |
+
+**179 of the 193 `<lj user>` targets are already in the `users` table**, because
+they also commented. So most resolve to people the archive already knows, and
+can link to their commenter page — the value-add commenter index (§13) gains a
+second entry point for free. The other 14 never commented and can only become
+plain external links.
+
+**`<lj-cut>` is usually unclosed: 54 of 69 entries.** LJ treated an unclosed cut
+as "cut to the end of the entry". An implementation that requires matched pairs
+mangles those 54.
+
+### 5.4 The fixture problem this creates
+
+M1's fixtures cannot test any of the above, and the reason generalises.
+
+They're 40 entries captured for _protocol_ shapes. Images live in 122 of 1,547
+entries, so a 40-entry slice yields 8 images, 4 hosts, zero `<lj user>`, zero
+`<lj-cut>`, and none of the concentrated hosts poison detection exists for.
+**A fixture selected for one milestone's needs is not automatically an oracle for
+the next one's.**
+
+So M2's oracle is built from the local archive instead — real bodies, selected
+for coverage, redacted structure-preserving (prose, usernames and URL paths out;
+tags, nesting, quoting and **hosts** kept, because host distribution _is_ the
+poison signal). Selection is not authorship; the bytes remain LiveJournal's.
+
+**Known trap: parse5 auto-closes unclosed tags on round-trip.** Verified: an
+unclosed `<lj-cut>` goes in as open=1/close=0 and comes out open=1/close=1. A
+fixture built by parse-and-reserialize therefore _repairs_ the exact
+malformation M2 must survive, and would silently test a well-formed corpus that
+does not exist. The redactor must edit in place rather than round-trip — the
+same reason the M1 scrubber does surgical text replacement instead of
+reserializing (§10).
+
 **Storage is content-addressed.** Fetch the bytes, hash them, store at
 `blobs/<sha256[:2]>/<sha256>.<ext>`. A manifest maps source URL → hash. Dedup
 across entries, across commenters, and across users sharing an icon falls out

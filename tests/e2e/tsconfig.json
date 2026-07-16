@@ -1,0 +1,22 @@
+{
+  // The E2E's page.evaluate() callbacks are serialized and run INSIDE Chromium,
+  // so they touch getComputedStyle and HTMLImageElement. Those types live here
+  // and ONLY here.
+  //
+  // Adding "DOM" to the shared test config instead looked equivalent and wasn't:
+  // it redefines BodyInit to the browser's version, and four existing image tests
+  // that hand a Uint8Array to Response stopped compiling. The DOM lib is not
+  // additive — it changes globals Node already defines.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "../..",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  // Only the E2E's own files. Globbing src/**/*.ts in would drag the unit tests
+  // into this DOM-typed compile and break them exactly as before — the src
+  // modules the fixture imports are still typechecked, transitively, as imports.
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

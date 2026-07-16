@@ -11,5 +11,8 @@
     "rootDir": "."
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  // The E2E needs DOM types and this config must NOT have them: "DOM" redefines
+  // globals Node already provides (BodyInit, Response), which silently breaks
+  // unit tests that hand a Uint8Array to Response. tests/e2e has its own config.
+  "exclude": ["node_modules", "dist", "tests/e2e"]
 }

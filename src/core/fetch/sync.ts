@@ -43,7 +43,7 @@ export async function sync(config: Config, deps: SyncDeps): Promise<SyncStats> {
 
   // --- login: identity + the mood vocabulary ------------------------------
   report({ kind: 'start', task: 'login' });
-  const login = parseLogin(await client.login(true));
+  const login = parseLogin(await client.login({ getMoods: true, getUserpics: true }));
   store.putMoods(login.moods);
   report({
     kind: 'done',

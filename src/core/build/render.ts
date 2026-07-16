@@ -236,14 +236,28 @@ export function renderBody(html: string, ctx: RenderContext): string {
       // Kept as a note with its reference, never localized: there is no
       // meaningful local copy of an embedded video (§5.2).
       const url = attr(node, 'src') ?? attr(node, 'data') ?? attr(node, 'id');
-      replace(
-        node,
-        el(
-          'span',
-          [{ name: 'class', value: 'embed-lost' }],
-          [text(`▶ embedded media${url !== undefined ? ` (${url})` : ''}`)],
-        ),
+      const marker = el(
+        'span',
+        [{ name: 'class', value: 'embed-lost' }],
+        [text(`▶ embedded media${url !== undefined ? ` (${url})` : ''}`)],
       );
+
+      // <lj-embed> is VOID and the others are not, so they cannot share a branch.
+      // In this corpus lj-embed opens 28 times and closes ZERO; <object> and
+      // <embed> are balanced 17/17. So parse5 nests the rest of the entry inside
+      // an lj-embed, and dropping its children deleted real content: 2 images and
+      // the text after the video in 6 entries, silently. Same void-tag trap as
+      // <lj user> and <lj-poll> — this is the third place it has bitten.
+      //
+      // The others keep dropping their children, which is correct rather than an
+      // omission: an <object>'s children are <param>s and fallback text that mean
+      // nothing once the object is gone.
+      if (tag === 'lj-embed') {
+        replaceWith(node, [marker, ...children]);
+        for (const c of children) visit(c);
+      } else {
+        replace(node, marker);
+      }
       return;
     } else if (tag !== undefined && LJ_TAG.test(tag)) {
       // Every OTHER lj-* tag, AFTER the specific handlers so it can only see the

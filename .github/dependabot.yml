@@ -18,6 +18,19 @@ updates:
     labels:
       - dependencies
 
+    # TypeScript majors are blocked on the linter, not on us. typescript-eslint
+    # 8.64.0 (latest stable; everything past it is 8.64.1-alpha.*) still declares
+    # peer typescript ">=4.8.4 <6.1.0", so TS 7 cannot resolve and `npm ci` fails
+    # before any of our code compiles. Without this rule Dependabot re-proposes a
+    # PR that cannot go green, every month, and a permanently-red PR trains you to
+    # ignore red.
+    #
+    # REMOVE THIS once typescript-eslint ships a TS 7 peer range. Minor and patch
+    # TS updates still flow normally.
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

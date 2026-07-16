@@ -8,17 +8,25 @@
  * images. Preston found it in a minute by opening the live page. LiveJournal is
  * the only oracle here that doesn't share the author's blind spots.
  *
- * It answers two DIFFERENT questions, which must not be conflated:
+ * TWO of the three things here work. The third does not, and is disabled.
  *
- *   1. Is archive.db complete?      Only the live page can say. A fetch/parse bug
- *                                   loses content before the renderer ever runs.
- *   2. Does the renderer drop what
- *      archive.db holds?           Answerable offline, by rendering the stored
- *                                   body and comparing. This is the <lj-embed>
- *                                   class, and it needs no network at all.
+ *   WORKS  Harvest the userpics and embed URLs the XML-RPC API refuses to give
+ *          up — per-entry AND per-comment, keyed by picid/userid. Verified
+ *          against an oracle it didn't author: every userid scraped is either
+ *          the author or a commenter already in our users table. Zero unknown.
  *
- * It also harvests what the XML-RPC API refuses to give up: the per-entry and
- * per-comment userpics, and the embed URLs behind LJ's bare <lj-embed id="42">.
+ *   WORKS  Does the renderer drop what archive.db holds? Offline, no network.
+ *          This is the <lj-embed> class.
+ *
+ *   BROKEN Is archive.db complete? Only the live page can say — but isolating
+ *          LJ's rendering of the entry body is unsolved here. Seven heuristics
+ *          in, it still reported loss on 6 of 7 entries whose text is provably
+ *          intact, because the locator lands on a wrapper holding the comments
+ *          and chrome. Rendered-vs-rendered (to neutralise lj-user, cuts, polls)
+ *          did not fix it either. It is switched OFF rather than shipped noisy:
+ *          a check that cries wolf on 85% of entries would bury the one real
+ *          finding it exists to surface. Fixing it needs a real look at LJ's S2
+ *          markup, not another heuristic.
  *
  * Auth is a SAVED SESSION, not a password (§8: never store credentials, use them
  * only to mint auth state). Log in once by hand in a real browser:
@@ -36,7 +44,7 @@
  * The session file and the report both land under archive/, which is gitignored:
  * one is live auth state, the other is private content.
  */
-import { chromium, type Page } from '@playwright/test';
+import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { renderBody } from '../src/core/build/render.js';
@@ -94,7 +102,8 @@ function sample(): Row[] {
   return out;
 }
 
-const words = (s: string): string[] =>
+/** Tags out, entities decoded, whitespace collapsed. Contiguous, order intact. */
+const plain = (s: string): string =>
   s
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
@@ -103,84 +112,90 @@ const words = (s: string): string[] =>
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/[\s\u00A0]+/g, ' ')
-    .trim()
+    .trim();
+
+/** For set-comparison only. Short words are dropped as noise. */
+const words = (s: string): string[] =>
+  plain(s)
     .split(' ')
     .filter((w) => w.length > 3);
 
 /**
- * Find LJ's rendering of the entry body WITHOUT a hardcoded CSS selector.
+ * Log in with the password and SAVE the session.
  *
- * LJ journals use S2 styles, so .entry-content / .asset-body / .entryText all
- * vary by theme and a wrong guess silently returns the page chrome instead of
- * the entry — a probe that can't fail for the reason we care about. Instead:
- * locate the deepest element that still contains a distinctive phrase from the
- * stored body. That element IS the body, whatever it's called.
+ * The saving is the point. Re-authenticating per run is what got LJ's web login
+ * throttled while the account stayed perfectly healthy on XML-RPC — so this runs
+ * at most once, then every later run reuses the cookies.
  */
-async function ljBodyText(page: Page, needle: string): Promise<string | null> {
-  return page.evaluate((n: string) => {
-    if (n.length < 8) return null;
-    const hits = [...document.querySelectorAll('div,td,article,section,p')].filter((e) =>
-      (e.textContent ?? '').includes(n),
-    );
-    if (hits.length === 0) return null;
-    // Deepest match = tightest wrapper around the text.
-    const deepest = hits.reduce((a, b) => (b.contains(a) ? a : b));
-    return deepest.textContent ?? null;
-  }, needle);
-}
-
-/**
- * Open a real window and wait for a human to log in. No password in the code, no
- * scripted auth to throttle, and whatever LJ asks for — captcha, 2FA, Sber ID —
- * a person can just answer.
- */
-async function interactiveLogin(): Promise<void> {
-  const b = await chromium.launch({ headless: false });
+async function login(pw: string): Promise<void> {
+  const b = await chromium.launch();
   const ctx = await b.newContext();
   const page = await ctx.newPage();
-  await page.goto('https://www.livejournal.com/login.bml');
-  console.log('Log in in the window that just opened. Waiting (5 min timeout)...');
-  // Wait for LJ itself to say we're in, rather than for a page/URL that might
-  // just be the form again.
-  await page
-    .waitForFunction(() => document.cookie.includes('ljloggedin='), undefined, { timeout: 300_000 })
-    .catch(() => {
-      throw new Error('timed out waiting for login');
-    });
-  mkdirSync('./archive', { recursive: true });
-  await ctx.storageState({ path: SESSION });
-  await b.close();
-  console.log(`session saved -> ${SESSION} (gitignored)`);
-  console.log('now run: npx tsx scripts/audit-vs-live.mts 40');
+  try {
+    await page.goto('https://www.livejournal.com/login.bml', { waitUntil: 'domcontentloaded' });
+
+    // The cookie banner sits over the page and can swallow the click.
+    await page
+      .getByRole('button', { name: /^OK$/i })
+      .click({ timeout: 3000 })
+      .catch(() => {});
+
+    // Scope to the REAL login form: the page carries three (search, login,
+    // OpenID) and TWO buttons named action:login. An unscoped click is a coin
+    // flip that posts the OpenID form instead.
+    const form = page.locator('form[action="https://www.livejournal.com/login.bml"]');
+    await form.locator('input[name="user"]').fill(USER);
+    await form.locator('input[name="password"]').fill(pw);
+    await form.locator('button[name="action:login"]').click();
+    await page.waitForLoadState('networkidle');
+
+    const authed = (await ctx.cookies()).some((c) => c.name === 'ljloggedin' && c.value.length > 3);
+    if (!authed) {
+      throw new Error(
+        'login rejected. The account is fine (XML-RPC still authenticates) — this is the web ' +
+          'login throttle. Wait a few minutes and re-run.',
+      );
+    }
+    mkdirSync('./archive', { recursive: true });
+    await ctx.storageState({ path: SESSION });
+    console.log(`logged in, session saved -> ${SESSION} (gitignored)`);
+  } finally {
+    await b.close();
+  }
 }
 
 async function main(): Promise<void> {
-  if (process.argv.includes('--login')) return interactiveLogin();
+  const pw = process.env['LJ_PASSWORD'];
 
+  // Log in ONLY when there's no session to reuse.
   if (!existsSync(SESSION)) {
-    throw new Error(`no saved session. Run first:\n  npx tsx scripts/audit-vs-live.mts --login`);
+    if (pw === undefined || pw === '') throw new Error('no session yet — set LJ_PASSWORD once');
+    await login(pw);
   }
 
   const rows = sample();
   console.log(`sampling ${rows.length} entries by shape, ${PACE_MS}ms apart\n`);
 
   const b = await chromium.launch();
-  const ctx = await b.newContext({ storageState: SESSION });
-  const page = await ctx.newPage();
+  let ctx = await b.newContext({ storageState: SESSION });
+  let page = await ctx.newPage();
 
   // Prove the session is live BEFORE auditing. An expired one silently serves
-  // anonymous pages, and every entry would look like catastrophic "db loss"
-  // when the truth is we were logged out.
+  // anonymous pages, and every entry would then look like catastrophic "db loss"
+  // when the truth is only that we were logged out.
   await page.goto(`https://${USER}.livejournal.com/`, { waitUntil: 'domcontentloaded' });
-  const authed = (await ctx.cookies()).some((c) => c.name === 'ljloggedin' && c.value.length > 3);
-  if (!authed) {
+  if (!(await ctx.cookies()).some((c) => c.name === 'ljloggedin' && c.value.length > 3)) {
     await b.close();
-    throw new Error('session expired — re-run with --login');
+    if (pw === undefined || pw === '')
+      throw new Error('session expired — set LJ_PASSWORD to renew');
+    await login(pw);
+    const b2 = await chromium.launch();
+    ctx = await b2.newContext({ storageState: SESSION });
+    page = await ctx.newPage();
   }
   console.log('session is live\n');
 
   const report: Record<string, unknown>[] = [];
-  let dbLoss = 0;
   let renderLoss = 0;
   let picsFound = 0;
   let embedUrls = 0;
@@ -199,16 +214,16 @@ async function main(): Promise<void> {
     const rendered = new Set(words(renderBody(r.body, ctxRender)));
     const droppedByRenderer = stored.filter((w) => !rendered.has(w));
 
-    // Q1, live: does the DB hold what LJ shows?
     await page.goto(`https://${USER}.livejournal.com/${r.ditemid}.html`, {
       waitUntil: 'domcontentloaded',
     });
-    const needle = words(r.body).slice(0, 4).join(' ');
-    const live = await ljBodyText(page, needle);
-    const liveWords = live === null ? [] : words(live);
-    const storedSet = new Set(stored);
-    // Words LJ renders that our stored body has no trace of.
-    const missingFromDb = live === null ? [] : liveWords.filter((w) => !storedSet.has(w));
+
+    // The db-completeness diff lived here and is GONE, not commented out — see
+    // the header. Every version of it reported loss on entries whose text is
+    // provably intact, because nothing here reliably isolates LJ's rendering of
+    // the body from the comments and chrome around it. Dead code that computes
+    // a number nobody may trust is worse than no code: someone eventually reads
+    // the number.
 
     // The harvest the API won't give us.
     const pics = await page.$$eval('img', (els) =>
@@ -223,20 +238,16 @@ async function main(): Promise<void> {
     picsFound += new Set(pics).size;
     embedUrls += frames.length;
     if (droppedByRenderer.length > 0) renderLoss++;
-    if (missingFromDb.length > 3) dbLoss++;
 
     report.push({
       ditemid: r.ditemid,
       shape: r.shape,
-      bodyLocated: live !== null,
       renderer_dropped_words: droppedByRenderer.length,
-      db_missing_words: missingFromDb.length,
       userpics: [...new Set(pics)],
       embeds: frames,
     });
 
-    const flag =
-      droppedByRenderer.length > 0 ? ' RENDERER-LOSS' : missingFromDb.length > 3 ? ' DB-LOSS' : '';
+    const flag = droppedByRenderer.length > 0 ? ' RENDERER-LOSS' : '';
     console.log(
       `${String(i + 1).padStart(3)}/${rows.length} ${r.ditemid} [${r.shape}] ` +
         `pics:${new Set(pics).size} embeds:${frames.length}${flag}`,
@@ -249,12 +260,10 @@ async function main(): Promise<void> {
   mkdirSync('./archive/audit', { recursive: true });
   writeFileSync('./archive/audit/vs-live.json', JSON.stringify(report, null, 2));
 
-  console.log(`\n--- ${rows.length} entries audited ---`);
+  console.log(`\n--- ${rows.length} entries sampled ---`);
   console.log(`renderer dropped content:  ${renderLoss}`);
-  console.log(`db missing what LJ shows:  ${dbLoss}`);
   console.log(`userpic urls harvested:    ${picsFound}`);
   console.log(`embed urls harvested:      ${embedUrls}`);
-  console.log(`bodies not located:        ${report.filter((r) => !r['bodyLocated']).length}`);
   console.log('\nreport: archive/audit/vs-live.json (gitignored — private content)');
 }
 

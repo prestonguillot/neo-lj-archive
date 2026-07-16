@@ -359,23 +359,72 @@ because the failure mode is publishing a decade of private entries to GitHub.
 
 ## §10. Testing
 
-**Fetcher: recorded fixtures.** Real XML responses captured once from the spike
-path, scrubbed of anything identifying, replayed in tests. **CI never touches
-LiveJournal** — it's someone else's server, it bans clients, and a test suite
-that depends on a 2010-era API being up is a test suite that fails for reasons
-unrelated to our code.
+### The rule: oracle provenance
 
-**Images: a local HTTP server** serving known-good images, 404s, timeouts,
-`text/html`-at-200, and the same placeholder bytes from many URLs. Poison
-detection is tested against synthetic poison — that's the only way to test it
-deterministically.
+**A test's expected value must not be derived from the code under test.** That is
+the whole discipline, and every failure mode below is a violation of it.
 
-**Build: synthetic corpus.** A hand-built `archive.db` with known contents,
-including the nasty cases (deleted commenter, anonymous comment, private entry,
-dead image, 2000-era tag soup), rendered and asserted against.
+Tests written by reading the implementation can only ever assert "the code does
+what the code does" — a tautology with a green checkmark. They execute lines, so
+coverage looks superb. They notice edits, so they survive mutation testing. They
+catch nothing, because a bug in the code was faithfully copied into the
+expectation.
 
-**Enforced by test, not convention:** that `usejournal` is never sent, and that
-`Secret` never renders its value.
+So: **prefer oracles nobody here authored.**
+
+| Layer      | Oracle                                                                                                           | Why it can't go tautological                                                                  |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Fetch      | Recorded real LJ XML, captured once, scrubbed                                                                    | LiveJournal wrote it in 2005. The fixture can't be bent to match a bug                        |
+| Build      | Playwright driving the built archive at `file://`                                                                | Asserts the artifact, not the code. There is no fake version of "the journal opens and reads" |
+| Images     | Local server: known-good bytes, 404s, timeouts, `text/html`-at-200, identical placeholder bytes across many URLs | Known-right answers, chosen adversarially rather than to match the implementation             |
+| Invariants | Stated properties (below)                                                                                        | Facts about the system, not lines to cover                                                    |
+
+**CI never touches LiveJournal** — it's someone else's server, it bans clients,
+and a suite depending on a 2010-era API being up fails for reasons unrelated to
+our code.
+
+**Build tests use a synthetic corpus**: a hand-built `archive.db` with known
+contents, including the nasty cases — deleted commenter, anonymous comment,
+screened comment, private entry, dead image, 2000-era tag soup.
+
+### Name the defect
+
+**Every nontrivial test ships with the specific break that makes it fail, named
+in the PR.** Not a random mutation — _the_ defect the test exists to catch:
+
+> catches: comment `parentid` read as `jitemid`, silently flattening every thread
+
+**If you can't name the defect, the test is decorative. Don't write it.**
+
+This is mutation testing with a chosen mutant instead of an arbitrary one: zero
+runtime, no equivalent-mutant noise, no ratchet, and the artifact is one sentence
+a reviewer can call bullshit on.
+
+### Why not Stryker
+
+Mutation testing measures whether tests are _sensitive_, not whether they're
+_meaningful_. It catches "asserts nothing." It cannot catch "asserts the
+implementation back at itself" — implementation-derived tests kill mutants
+perfectly well. Applied to coverage-farmed tests it makes them longer and more
+brittle, not better, and charges runtime plus a ratchet chore for the privilege.
+It earns its keep as a _discovery_ tool on code you didn't write and don't
+understand; as a quality gate on new code it optimizes a proxy.
+
+Reversible: if the tests in a milestone don't survive review, `npm i -D
+@stryker-mutator/core` and this section was wrong.
+
+### Coverage is not measured
+
+No coverage script, no coverage gate, no coverage report. It is the incentive
+that grows the disease; reporting it feeds it. A number that rewards executing
+lines will get lines executed.
+
+### Enforced by test, not convention
+
+- `usejournal` is never sent (§3) — scope violation, would archive nine
+  communities nobody asked for.
+- `Secret` never renders its value (§8) — `md5(password)` is password-equivalent.
+- Core never reaches `console`/`process` (§15) — enforced by lint, which CI runs.
 
 ## §11. Milestones
 

@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { DEFAULTS, Secret, type Config } from '../core/index.js';
 import { LjClient, BannedError } from '../core/fetch/client.js';
 import { localizeImages } from '../core/images/index.js';
+import { buildSite } from '../core/build/index.js';
 import { sync } from '../core/fetch/sync.js';
 import { Store } from '../core/store/db.js';
 import { renderProgress } from './progress.js';
@@ -131,9 +132,44 @@ program
 program
   .command('build')
   .description('archive.db -> site/. Plain HTML, opens from file://.')
+  .option('-u, --user <username>', 'LJ username (for resolving self-links)')
   .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
-  .option('-t, --theme <path>', 'stylesheet to use instead of the default')
-  .action(NOT_YET('M3'));
+  .action(async (opts: { user?: string; out: string }) => {
+    const store = Store.open(opts.out);
+    try {
+      if (store.stats().entries === 0) {
+        console.error('Nothing fetched yet. Run: neo-lj fetch');
+        process.exit(2);
+      }
+
+      // Like `images`, this stage never authenticates. The username is only for
+      // spotting links back into the author's own journal (§7.3).
+      const username = opts.user ?? process.env['LJ_USER'] ?? store.getState('username');
+      if (username === undefined) {
+        console.error('Need --user or LJ_USER to resolve self-links.');
+        process.exit(2);
+      }
+
+      const config: Config = {
+        username,
+        passwordMd5: new Secret(''), // unused here; this stage never authenticates
+        outputDir: opts.out,
+        requestDelayMs: DEFAULTS.requestDelayMs,
+        imageConcurrency: DEFAULTS.imageConcurrency,
+        imageTimeoutMs: DEFAULTS.imageTimeoutMs,
+      };
+
+      const stats = await buildSite(config, { store, report: renderProgress() });
+
+      console.log(
+        `\n${stats.pages} pages: ${stats.entries} entries, ${stats.comments} comments, ` +
+          `${stats.imagesKept} images (${stats.imagesLost} marked lost)`,
+      );
+      console.log(`\nOpen it: ${opts.out}/site/index.html`);
+    } finally {
+      store.close();
+    }
+  });
 
 program
   .command('status')

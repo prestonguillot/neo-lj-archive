@@ -1,0 +1,27 @@
+version: 2
+
+# Two ecosystems to scan: the npm dependencies in package.json and the GitHub
+# Actions pinned in .github/workflows/*.yml. Dependabot PRs are NOT auto-labeled
+# release:* - a dependency bump doesn't automatically warrant cutting a release;
+# add a release label manually before merging if you want one to ship.
+#
+# Worth watching here specifically: node:sqlite is a release candidate, so its
+# API can shift under us. That won't arrive as a Dependabot PR - it arrives as a
+# Node version bump. The CI matrix (22 and 24) is what catches it. See
+# DESIGN.md §15.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies

@@ -1,0 +1,11 @@
+{
+  // The build's tsconfig excludes *.test.ts — correct, we don't ship tests.
+  // But vitest transpiles without typechecking, so nothing would look at them
+  // at all. This is the only thing that does.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

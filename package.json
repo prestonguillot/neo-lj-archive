@@ -4,11 +4,13 @@
   "description": "Archive a LiveJournal — entries, threaded comments, and local copies of every image — into a static site you can read offline, forever, without this tool.",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest",
+    "type-check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "type-check:tests": "tsc -p tsconfig.test.json",
+    "test:run": "vitest run"
   },
   "keywords": [],
   "author": "",

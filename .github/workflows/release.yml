@@ -1,0 +1,78 @@
+name: release
+
+# Cuts a vX.Y.Z tag + GitHub Release when a PR merges into main carrying a
+# release:patch / release:minor / release:major label. Unlabeled PRs merge
+# normally without a release.
+#
+# No test re-run here: branch protection on main already required the CI check to
+# pass on the up-to-date PR before the merge button enabled, so the merged commit
+# is already known-good. Versioning is tag-based (package.json is not bumped).
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      bump: ${{ steps.label.outputs.bump }}
+    steps:
+      - name: Pick highest-precedence release label
+        id: label
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if echo "$LABELS" | grep -q '"release:major"'; then
+            echo "bump=major" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"release:minor"'; then
+            echo "bump=minor" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"release:patch"'; then
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "No release:* label on PR #${{ github.event.pull_request.number }} - skipping tag/release."
+          fi
+
+  release:
+    needs: detect
+    if: needs.detect.outputs.bump != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need full tag history to compute the next version
+          ref: main
+
+      - name: Configure bot identity for the tag
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Compute + push the next tag
+        id: tag
+        run: |
+          latest=$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)
+          [ -z "$latest" ] && latest="v0.0.0"
+          ver=${latest#v}
+          major=${ver%%.*}; rest=${ver#*.}; minor=${rest%%.*}; patch=${rest#*.}
+          case "${{ needs.detect.outputs.bump }}" in
+            major) major=$((major+1)); minor=0; patch=0 ;;
+            minor) minor=$((minor+1)); patch=0 ;;
+            patch) patch=$((patch+1)) ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          git tag -a "$next" -m "$next"
+          git push origin "$next"
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ steps.tag.outputs.tag }}" --title "${{ steps.tag.outputs.tag }}" --generate-notes

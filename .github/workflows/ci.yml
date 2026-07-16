@@ -1,34 +1,54 @@
 name: CI
 
+# Build and run the test suite on every push and PR to main, and on demand.
+# Branch protection requires this check to pass before a PR can merge.
+#
+# CI never touches LiveJournal. It's someone else's server, it bans clients, and
+# a suite that depends on a 2010-era API being up fails for reasons unrelated to
+# our code. Fetcher tests replay recorded fixtures (DESIGN.md §10).
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch: # allow manual trigger via the Actions UI
 
 jobs:
-  check:
+  build-and-test:
+    name: Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        # 22 is the floor (node:sqlite unflagged since 22.13). 24 is what
+        # 22.13 is the floor (node:sqlite unflagged from there). 24 is what
         # Electron 43 bundles — the M5 target. node:sqlite is still a release
         # candidate, so this matrix is what catches API drift between the
-        # version we develop on and the one the app will ship. DESIGN.md §15.
-        node: [22, 24]
+        # version we develop on and the one the app will eventually ship
+        # (DESIGN.md §15).
+        node: ['22', '24']
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
+          cache: 'npm'
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Type-check & build
+        run: npm run build
+
+      # The build's tsconfig only covers src/ and excludes *.test.ts, and vitest
+      # transpiles without typechecking. Without this step nothing looks at the
+      # tests at all.
+      - name: Type-check tests
+        run: npm run type-check:tests
 
       - name: Lint
         run: npm run lint
@@ -36,9 +56,5 @@ jobs:
       - name: Format check
         run: npm run format:check
 
-      - name: Test
-        run: npm test
-
-      # CI never touches LiveJournal. It's someone else's server, it bans
-      # clients, and a suite that depends on a 2010-era API being up fails for
-      # reasons unrelated to our code. DESIGN.md §10.
+      - name: Run tests
+        run: npm run test:run

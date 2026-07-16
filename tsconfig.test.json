@@ -4,8 +4,12 @@
   // at all. This is the only thing that does.
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // The base pins rootDir to src/ so the build emits a clean dist/ tree. This
+    // config emits nothing, and tests live outside src/, so rootDir is both
+    // meaningless here and an error (TS6059).
+    "rootDir": "."
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -109,6 +109,23 @@ function ljLostLabel(tag: string, node: Node): string {
   return `🔖 LiveJournal <${tag}> — a feature that lived on LJ's servers`;
 }
 
+/**
+ * A person's journal URL.
+ *
+ * LJ maps underscores to hyphens in journal HOSTNAMES: <lj user="a_b"> links to
+ * a-b.livejournal.com, because an underscore is not legal in a hostname.
+ * Building a_b.livejournal.com yields an address that resolves to nothing — 40
+ * of the 193 people in this journal, 21% of them. The NAME keeps its underscore;
+ * only the host is rewritten.
+ *
+ * Exported because comment AUTHORS are linked from build/index.ts, a separate
+ * code path that had its own copy of this URL and its own copy of the bug. Two
+ * places building the same string is how the fix reached body mentions and left
+ * 644 comment bylines broken.
+ */
+export const journalUrl = (username: string): string =>
+  `https://${username.replace(/_/g, '-')}.livejournal.com/`;
+
 const IMAGE_EXT = /\.(jpe?g|png|gif|bmp|webp|tiff?)(?:[?#]|$)/i;
 
 /**
@@ -212,7 +229,7 @@ export function renderBody(html: string, ctx: RenderContext): string {
           'a',
           [
             { name: 'class', value: 'lj-user' },
-            { name: 'href', value: `https://${user}.livejournal.com/` },
+            { name: 'href', value: journalUrl(user) },
           ],
           [text(user)],
         );

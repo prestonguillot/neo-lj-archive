@@ -58,3 +58,61 @@ jobs:
 
       - name: Run tests
         run: npm run test:run
+
+  e2e:
+    name: E2E (the site in a real browser)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # The archive's promise is "open index.html, offline, forever" (DESIGN.md
+    # §13), and a browser is the only oracle for it. The unit suite proves the
+    # HTML says the right things; it cannot prove Chromium renders them, that a
+    # relative stylesheet resolves from file://, or that an image decodes.
+    #
+    # One Node version, not the matrix: the site is static HTML, so what Chromium
+    # renders doesn't vary by the Node that emitted it, and a browser download per
+    # matrix leg buys nothing. The matrix job above is what covers Node drift.
+    #
+    # It builds a synthetic archive — never the author's journal, which is private
+    # and not in source control.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the resolved Playwright version: a browser build is pinned to
+          # it, so a stale cache after an upgrade is a confusing failure.
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      # The cached path restores the browser but not the OS libs it links against.
+      - name: Install browser system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run E2E
+        run: npm run test:e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

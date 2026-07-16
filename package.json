@@ -8,9 +8,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest",
-    "type-check": "tsc --noEmit && tsc -p tsconfig.test.json",
-    "type-check:tests": "tsc -p tsconfig.test.json",
-    "test:run": "vitest run"
+    "type-check": "tsc --noEmit && tsc -p tsconfig.test.json && tsc -p tests/e2e/tsconfig.json",
+    "type-check:tests": "tsc -p tsconfig.test.json && tsc -p tests/e2e/tsconfig.json",
+    "test:run": "vitest run",
+    "test:e2e": "playwright test"
   },
   "keywords": [],
   "author": "",
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.1",
     "@types/ejs": "^3.1.5",
     "@types/node": "^26.1.1",
     "@types/semver": "^7.7.1",

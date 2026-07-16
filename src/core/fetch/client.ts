@@ -158,8 +158,19 @@ export class LjClient {
     };
   }
 
-  async login(getMoods = true): Promise<string> {
-    return this.#raw('LJ.XMLRPC.login', getMoods ? { getmoods: 0 } : {});
+  /**
+   * `login` is also where LJ keeps the account's userpic list, but only if you
+   * ask: without getpickws/getpickwurls it says nothing about them, which is
+   * why the archive had no userpics at all rather than a bug losing them.
+   */
+  async login(opts: { getMoods?: boolean; getUserpics?: boolean } = {}): Promise<string> {
+    const { getMoods = true, getUserpics = false } = opts;
+    return this.#raw('LJ.XMLRPC.login', {
+      ...(getMoods ? { getmoods: 0 } : {}),
+      // Keywords and URLs are separate flags and both are needed: the keyword is
+      // what an entry names its pic by, the URL is the only way to fetch it.
+      ...(getUserpics ? { getpickws: 1, getpickwurls: 1 } : {}),
+    });
   }
 
   /**

@@ -151,6 +151,39 @@ describe('renderBody — LJ markup (§5.3)', () => {
     expect(html).toContain('https://v.invalid/x');
   });
 
+  // catches: EVERYTHING AFTER A VIDEO BEING DELETED. <lj-embed> opens 28 times in
+  // the real corpus and closes zero times — it is void, exactly like <lj user>.
+  // parse5 therefore nests the rest of the entry inside it, and replacing the tag
+  // without hoisting its children threw that away: entry 406397 has 3 images and
+  // rendered 1, plus the text after the video, across 6 items. Found by the author
+  // comparing a built page against the live journal, not by this suite.
+  it('keeps the images and prose that follow an unclosed lj-embed', () => {
+    const html = renderBody(
+      '<img src="http://h.invalid/a.jpg"><lj-embed id="42">' +
+        'words after the video<img src="http://h.invalid/b.jpg">',
+      ctx({ localFor: (u) => (u.endsWith('a.jpg') ? 'blobs/a.jpg' : 'blobs/b.jpg') }),
+    );
+    expect(html).toContain('embedded media');
+    expect(html).toContain('words after the video');
+    // BOTH images survive — the one before the embed and the one after it.
+    expect((html.match(/<img/g) ?? []).length).toBe(2);
+  });
+
+  // catches: hoisting <object>'s children. Unlike lj-embed these are balanced
+  // 17/17 in the corpus, and their children are <param>s and fallback text that
+  // mean nothing once the object is gone — they belong to it and go with it.
+  it('drops the fallback content inside a properly closed object', () => {
+    const html = renderBody(
+      '<object data="http://v.invalid/x"><param name="movie"><b>needs flash</b></object>after',
+      ctx(),
+    );
+    expect(html).toContain('embedded media');
+    expect(html).not.toContain('needs flash');
+    expect(html).not.toContain('<param');
+    // But real content after the object is untouched.
+    expect(html).toContain('after');
+  });
+
   // catches: a poll rendering as nothing. LJ kept polls on its servers, so the
   // export has only <lj-poll-1438708> — an unknown tag a browser drops silently.
   // One real entry reads "So LiveJournal, I ask you:" and then the poll; drop it

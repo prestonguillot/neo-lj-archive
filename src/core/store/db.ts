@@ -28,6 +28,45 @@ export interface SyncStats {
   readonly moods: number;
 }
 
+export interface ImageStats {
+  readonly refs: number;
+  readonly distinctUrls: number;
+  readonly hosts: number;
+  readonly pending: number;
+  readonly blobs: number;
+  readonly poison: number;
+  readonly deadRefs: number;
+}
+
+export interface BodyRow {
+  readonly context: 'entry' | 'comment';
+  readonly id: number;
+  readonly html: string;
+  /** The permalink relative URLs resolve against. */
+  readonly url: string;
+}
+
+export interface AssetRefRow {
+  readonly sourceUrl: string;
+  readonly host: string | undefined;
+  readonly context: string;
+  readonly contextId: number;
+  readonly altText: string | undefined;
+}
+
+export interface AssetResult {
+  readonly url: string;
+  readonly hash: string | undefined;
+  readonly mime: string | undefined;
+  readonly byteLen: number;
+  readonly width: number | undefined;
+  readonly height: number | undefined;
+  readonly status: string;
+  readonly localPath: string | undefined;
+  readonly httpStatus: number | undefined;
+  readonly reason: string | undefined;
+}
+
 export class Store {
   readonly #db: DatabaseSync;
 
@@ -208,6 +247,152 @@ export class Store {
       comments: one('SELECT COUNT(*) AS n FROM comments'),
       users: one('SELECT COUNT(*) AS n FROM users'),
       moods: one('SELECT COUNT(*) AS n FROM moods'),
+    };
+  }
+
+  // --- images (§5.2) -------------------------------------------------------
+
+  /**
+   * Every body to scan, with the permalink relative URLs resolve against.
+   *
+   * A comment's images resolve against the URL of the ENTRY it hangs off, not
+   * the comment — a comment has no page of its own. Hence the join.
+   */
+  bodiesForExtraction(username: string): BodyRow[] {
+    const base = (ditemid: number): string => `https://${username}.livejournal.com/${ditemid}.html`;
+
+    const entries = this.#db.prepare('SELECT itemid AS id, ditemid, body FROM entries').all() as {
+      id: number;
+      ditemid: number;
+      body: string;
+    }[];
+
+    const comments = this.#db
+      .prepare(
+        `SELECT c.id AS id, e.ditemid AS ditemid, c.body AS body
+           FROM comments c JOIN entries e ON e.itemid = c.jitemid
+          WHERE c.body IS NOT NULL`,
+      )
+      .all() as { id: number; ditemid: number; body: string }[];
+
+    return [
+      ...entries.map((r) => ({
+        context: 'entry' as const,
+        id: r.id,
+        html: r.body,
+        url: base(r.ditemid),
+      })),
+      ...comments.map((r) => ({
+        context: 'comment' as const,
+        id: r.id,
+        html: r.body,
+        url: base(r.ditemid),
+      })),
+    ];
+  }
+
+  /** Record references before anything is fetched. Idempotent on re-run. */
+  putAssetRefs(refs: readonly AssetRefRow[]): void {
+    const s = this.#db.prepare(`
+      INSERT INTO asset_refs (source_url, host, context, context_id, alt_text)
+      VALUES (?,?,?,?,?)
+      ON CONFLICT (source_url, context, context_id) DO UPDATE SET
+        host=excluded.host, alt_text=excluded.alt_text
+    `);
+    this.#tx(() => {
+      for (const r of refs) s.run(r.sourceUrl, n(r.host), r.context, r.contextId, n(r.altText));
+    });
+  }
+
+  /**
+   * The work list: URLs never attempted.
+   *
+   * Derived from the DB rather than memory, so a killed run resumes and a
+   * completed one is a no-op (§4.5). Nothing re-downloads the world.
+   */
+  pendingUrls(): string[] {
+    return (
+      this.#db
+        .prepare('SELECT DISTINCT source_url AS u FROM asset_refs WHERE fetched_at IS NULL')
+        .all() as { u: string }[]
+    ).map((r) => r.u);
+  }
+
+  /**
+   * Record one fetch outcome against every reference to that URL.
+   *
+   * `hash` is NULL for anything dead — there are no bytes to point at — but the
+   * reason is kept, because the placeholder has to name what was lost (§4.3).
+   */
+  putAssetResult(a: AssetResult, now = new Date().toISOString()): void {
+    this.#tx(() => {
+      if (a.hash !== undefined && a.localPath !== undefined) {
+        this.#db
+          .prepare(
+            `INSERT INTO assets (hash, mime, byte_len, width, height, status, local_path, fetched_at)
+             VALUES (?,?,?,?,?,?,?,?)
+             ON CONFLICT (hash) DO UPDATE SET
+               mime=excluded.mime, byte_len=excluded.byte_len, width=excluded.width,
+               height=excluded.height, local_path=excluded.local_path`,
+          )
+          .run(
+            a.hash,
+            a.mime ?? 'application/octet-stream',
+            a.byteLen,
+            n(a.width),
+            n(a.height),
+            a.status,
+            a.localPath,
+            now,
+          );
+      }
+      this.#db
+        .prepare(
+          `UPDATE asset_refs SET hash = ?, http_status = ?, error = ?, fetched_at = ?
+            WHERE source_url = ?`,
+        )
+        .run(n(a.hash), n(a.httpStatus), n(a.reason), now, a.url);
+    });
+  }
+
+  /** Every fetched reference, for host-collapse detection. */
+  poisonInput(): { hash: string; sourceUrl: string; host: string }[] {
+    return this.#db
+      .prepare(
+        `SELECT hash, source_url AS sourceUrl, host
+           FROM asset_refs WHERE hash IS NOT NULL AND host IS NOT NULL`,
+      )
+      .all() as { hash: string; sourceUrl: string; host: string }[];
+  }
+
+  /**
+   * Demote blobs to poison.
+   *
+   * The bytes stay on disk. A verdict is a FLAG, never a deletion — which is
+   * what makes automatic classification safe: a wrong call costs a rebuild, not
+   * data (§5.2).
+   */
+  markPoison(hashes: readonly string[]): void {
+    const s = this.#db.prepare("UPDATE assets SET status = 'poison' WHERE hash = ?");
+    this.#tx(() => {
+      for (const h of hashes) s.run(h);
+    });
+  }
+
+  imageStats(): ImageStats {
+    const one = (sql: string): number => (this.#db.prepare(sql).get() as { n: number }).n;
+    return {
+      refs: one('SELECT COUNT(*) AS n FROM asset_refs'),
+      distinctUrls: one('SELECT COUNT(DISTINCT source_url) AS n FROM asset_refs'),
+      hosts: one('SELECT COUNT(DISTINCT host) AS n FROM asset_refs'),
+      pending: one(
+        'SELECT COUNT(DISTINCT source_url) AS n FROM asset_refs WHERE fetched_at IS NULL',
+      ),
+      blobs: one("SELECT COUNT(*) AS n FROM assets WHERE status = 'ok'"),
+      poison: one("SELECT COUNT(*) AS n FROM assets WHERE status = 'poison'"),
+      deadRefs: one(
+        'SELECT COUNT(*) AS n FROM asset_refs WHERE fetched_at IS NOT NULL AND hash IS NULL',
+      ),
     };
   }
 

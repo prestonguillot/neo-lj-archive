@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { DEFAULTS, type Config } from '../core/index.js';
+import { DEFAULTS, Secret, type Config } from '../core/index.js';
 import { LjClient, BannedError } from '../core/fetch/client.js';
+import { localizeImages } from '../core/images/index.js';
 import { sync } from '../core/fetch/sync.js';
 import { Store } from '../core/store/db.js';
 import { renderProgress } from './progress.js';
@@ -54,6 +55,8 @@ program
     };
 
     const store = Store.open(config.outputDir);
+    // So later stages can resolve relative image URLs without re-asking (§5.2).
+    store.setState('username', config.username);
     const client = new LjClient({
       username: config.username,
       passwordMd5: config.passwordMd5,
@@ -75,9 +78,49 @@ program
 program
   .command('images')
   .description('Download every image, content-address it, and auto-classify placeholders.')
+  .option('-u, --user <username>', 'LJ username (for resolving relative image URLs)')
   .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
   .option('-c, --concurrency <n>', 'parallel downloads', String(DEFAULTS.imageConcurrency))
-  .action(NOT_YET('M2'));
+  .option('-t, --timeout <ms>', 'per-image timeout', String(DEFAULTS.imageTimeoutMs))
+  .action(async (opts: { user?: string; out: string; concurrency: string; timeout: string }) => {
+    const store = Store.open(opts.out);
+    try {
+      const { entries } = store.stats();
+      if (entries === 0) {
+        console.error('Nothing fetched yet. Run: neo-lj fetch');
+        process.exit(2);
+      }
+
+      // No credentials needed: this stage never talks to LiveJournal. It reads
+      // archive.db and fetches from third-party hosts. The username is only for
+      // building the permalink that relative URLs resolve against (§5.2).
+      const username = opts.user ?? process.env['LJ_USER'] ?? store.getState('username');
+      if (username === undefined) {
+        console.error('Need --user (or LJ_USER) to resolve relative image URLs.');
+        process.exit(2);
+      }
+
+      const config: Config = {
+        username,
+        passwordMd5: new Secret(''), // unused here; this stage never authenticates
+        outputDir: opts.out,
+        requestDelayMs: DEFAULTS.requestDelayMs,
+        imageConcurrency: Number(opts.concurrency),
+        imageTimeoutMs: Number(opts.timeout),
+      };
+
+      const stats = await localizeImages(config, { store, report: renderProgress() });
+
+      console.log(
+        `\n${stats.blobs} images stored, ${stats.deadRefs} refs dead, ` +
+          `${stats.poison} placeholder blob(s) — across ${stats.hosts} hosts`,
+      );
+      console.log(`${stats.distinctUrls} distinct URLs from ${stats.refs} references`);
+      if (stats.pending > 0) console.log(`${stats.pending} still to try — re-run to resume.`);
+    } finally {
+      store.close();
+    }
+  });
 
 program
   .command('classify')

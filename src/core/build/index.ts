@@ -5,7 +5,7 @@
 import ejs from 'ejs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { renderBody } from './render.js';
+import { renderBody, journalUrl } from './render.js';
 import { STYLE } from './theme.js';
 import * as T from './templates.js';
 import { Store } from '../store/db.js';
@@ -243,9 +243,13 @@ export async function buildSite(
             id: c.id,
             state: c.state,
             // Anonymous is the ABSENCE of a poster, not a kind of user (§6).
+            // journalUrl, not a hand-built host: LJ maps underscores to hyphens
+            // in journal hostnames, and this line had its own copy of that URL
+            // and its own copy of the bug. Fixing the renderer left all 644
+            // comment bylines here still pointing at nothing.
             who:
               c.username !== null
-                ? `<a class="lj-user" href="https://${esc(c.username)}.livejournal.com/">${esc(c.username)}</a>`
+                ? `<a class="lj-user" href="${esc(journalUrl(c.username))}">${esc(c.username)}</a>`
                 : '<span class="anon">anonymous</span>',
             date: c.date ?? '',
             stateLabel:

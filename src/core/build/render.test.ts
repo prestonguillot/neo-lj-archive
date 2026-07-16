@@ -104,6 +104,19 @@ describe('renderBody — LJ markup (§5.3)', () => {
     expect(html).toContain('href="https://alice.livejournal.com/"');
   });
 
+  // catches: an underscore name linking to a hostname that resolves to nothing.
+  // LJ maps underscores to hyphens in journal hosts — <lj user="a_b"> goes to
+  // a-b.livejournal.com, because an underscore is not legal in a hostname. 40 of
+  // the 193 people in the real journal have one, so 21% of mentions dead-ended.
+  // Found by diffing entry 353017 against the live page, where exactly the 37
+  // underscore-names were the 37 LJ linked and we didn't.
+  it('maps underscores to hyphens in the link host, but not in the name', () => {
+    const html = renderBody('<lj user="some_user">', ctx());
+    expect(html).toContain('href="https://some-user.livejournal.com/"');
+    // The person is still called what they are called.
+    expect(html).toContain('>some_user<');
+  });
+
   it('renders <lj comm> too', () => {
     expect(renderBody('<lj comm="somegroup">', ctx())).toContain('somegroup');
   });

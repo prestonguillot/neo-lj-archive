@@ -1,0 +1,24 @@
+# --- Archive output. NEVER committed. -------------------------------------
+# This holds a decade of private entries and other people's comments. The
+# generated directory also carries its own `.gitignore` containing `*` as a
+# second line of defence (DESIGN.md §8).
+/archive/
+
+# --- Credentials -----------------------------------------------------------
+.env
+.env.*
+*.pem
+
+# --- Build / deps ----------------------------------------------------------
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- Test / tooling --------------------------------------------------------
+coverage/
+test-results/
+playwright-report/
+.vitest/
+
+# --- OS --------------------------------------------------------------------
+.DS_Store

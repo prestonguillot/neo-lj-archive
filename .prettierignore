@@ -1,0 +1,6 @@
+# Historical handoff brief. Frozen — superseded by DESIGN.md. Don't churn it.
+PLAN.md
+
+dist/
+archive/
+coverage/

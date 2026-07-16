@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { DEFAULTS } from '../core/index.js';
+import { DEFAULTS, type Config } from '../core/index.js';
+import { LjClient, BannedError } from '../core/fetch/client.js';
+import { sync } from '../core/fetch/sync.js';
+import { Store } from '../core/store/db.js';
 import { renderProgress } from './progress.js';
+import { resolveCredentials } from './credentials.js';
 
 // node:sqlite is experimental on the LTS lines, and Node says so on every run.
 // That's a fair warning for a library and pure noise for a CLI a human types.
@@ -37,7 +41,36 @@ program
     'delay between LJ requests (deliberately slow; a 403 means a ban)',
     String(DEFAULTS.requestDelayMs),
   )
-  .action(NOT_YET('M1'));
+  .action(async (opts: { user?: string; out: string; delay: string }) => {
+    const { username, passwordMd5 } = await resolveCredentials(opts.user);
+
+    const config: Config = {
+      username,
+      passwordMd5,
+      outputDir: opts.out,
+      requestDelayMs: Number(opts.delay),
+      imageConcurrency: DEFAULTS.imageConcurrency,
+      imageTimeoutMs: DEFAULTS.imageTimeoutMs,
+    };
+
+    const store = Store.open(config.outputDir);
+    const client = new LjClient({
+      username: config.username,
+      passwordMd5: config.passwordMd5,
+      requestDelayMs: config.requestDelayMs,
+    });
+
+    try {
+      const stats = await sync(config, { client, store, report: renderProgress() });
+      console.log(
+        `\n${stats.entries} entries, ${stats.comments} comments, ` +
+          `${stats.users} commenters, ${stats.moods} moods -> ${config.outputDir}/archive.db`,
+      );
+      console.log('Re-run any time; it resumes and never re-downloads the world.');
+    } finally {
+      store.close();
+    }
+  });
 
 program
   .command('images')
@@ -63,12 +96,28 @@ program
   .command('status')
   .description("What's fetched, what's missing, what's dead.")
   .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
-  .action(NOT_YET('M1'));
+  .action((opts: { out: string }) => {
+    const store = Store.open(opts.out);
+    try {
+      const s = store.stats();
+      console.log(`archive: ${opts.out}/archive.db`);
+      console.log(`  entries    ${s.entries}`);
+      console.log(`  comments   ${s.comments}`);
+      console.log(`  commenters ${s.users}`);
+      console.log(`  moods      ${s.moods}`);
+      if (s.entries === 0) console.log('\nNothing fetched yet. Run: neo-lj fetch');
+    } finally {
+      store.close();
+    }
+  });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
+  // A ban is the one error worth its own exit code: it means stop and wait, not
+  // fix something and retry (DESIGN.md §9).
+  if (err instanceof BannedError) {
+    console.error(`\n${err.message}`);
+    process.exit(3);
+  }
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });
-
-// Referenced so the shell's own seam implementation is wired from day one.
-export { renderProgress };

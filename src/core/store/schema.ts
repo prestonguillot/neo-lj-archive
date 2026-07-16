@@ -1,0 +1,102 @@
+/**
+ * The canonical store (DESIGN.md §6).
+ *
+ * Inlined as TypeScript rather than read from a .sql file at runtime. tsc does
+ * not copy non-TS assets into dist/, so a readFileSync here builds green, tests
+ * green (vitest resolves from src/), and then dies on first real use with
+ * ENOENT. It did exactly that. A bundler (Electron, M5) would have the same
+ * problem with more steps.
+ */
+export const SCHEMA = `
+-- The canonical store (DESIGN.md §6).
+--
+-- Nullability here is not incidental. Every NULL below is a shape LiveJournal
+-- actually sends, verified against a real capture — getting one wrong is a bug
+-- on live data, not a style preference.
+--
+-- Idempotent: re-running is a no-op. §4 principle 5, "re-runs are free".
+
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS entries (
+  itemid          INTEGER PRIMARY KEY,
+  anum            INTEGER NOT NULL,
+  -- From LJ directly. Not computed as itemid*256+anum (§7.3).
+  ditemid         INTEGER NOT NULL,
+  eventtime       TEXT    NOT NULL,
+  logtime         TEXT,
+  subject         TEXT,
+  body            TEXT    NOT NULL,
+  -- 'public' | 'private' | 'usemask'. LJ omits the field entirely for public.
+  security        TEXT    NOT NULL,
+  -- Only meaningful when security = 'usemask'.
+  allowmask       INTEGER,
+  -- mood and moodid are INDEPENDENT: either, both, or neither (§5.1).
+  mood            TEXT,
+  moodid          INTEGER,
+  music           TEXT,
+  location        TEXT,
+  picture_keyword TEXT,
+  -- Everything LJ sent that we don't model. Kept, not dropped — this archive is
+  -- meant to be lossless.
+  props_json      TEXT    NOT NULL DEFAULT '{}',
+  fetched_at      TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS entries_eventtime ON entries (eventtime);
+CREATE INDEX IF NOT EXISTS entries_ditemid ON entries (ditemid);
+
+CREATE TABLE IF NOT EXISTS entry_tags (
+  itemid INTEGER NOT NULL REFERENCES entries (itemid) ON DELETE CASCADE,
+  tag    TEXT    NOT NULL,
+  PRIMARY KEY (itemid, tag)
+);
+
+-- LJ's own mood vocabulary, fetched once via login+getmoods. Without it every
+-- current_moodid is an unresolvable integer and those entries render no mood.
+CREATE TABLE IF NOT EXISTS moods (
+  moodid INTEGER PRIMARY KEY,
+  name   TEXT    NOT NULL,
+  parent INTEGER
+);
+
+-- Commenters, from the usermaps block of comment_meta.
+-- No is_anon column: anonymity is the ABSENCE of a poster, not a kind of user.
+-- Modelling it as a row invents an identity LJ never asserted (§6).
+CREATE TABLE IF NOT EXISTS users (
+  posterid INTEGER PRIMARY KEY,
+  username TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id       INTEGER PRIMARY KEY,
+  jitemid  INTEGER NOT NULL,
+  -- NULL = top-level. NEVER 0. LJ omits the attribute; reading absent-as-0
+  -- makes every root comment a reply to a comment that doesn't exist and
+  -- silently flattens every thread (§5.1).
+  parentid INTEGER,
+  -- NULL = anonymous. NEVER 0. LJ omits the attribute for anonymous comments;
+  -- 22 of them in this journal. A NOT NULL FK throws on real data.
+  posterid INTEGER REFERENCES users (posterid),
+  subject  TEXT,
+  -- NULL for deleted comments: they arrive self-closing, with no children.
+  body     TEXT,
+  date     TEXT,
+  -- 'A' | 'D' | 'S' | 'F'. LJ only transmits it when NOT 'A'.
+  state    TEXT    NOT NULL DEFAULT 'A',
+  fetched_at TEXT  NOT NULL
+);
+
+-- No FK from comments.jitemid to entries.itemid on purpose: comment_meta
+-- returns the whole journal's comments in one page, so comments can legitimately
+-- arrive before the entry they hang off. Resolved at build time instead.
+CREATE INDEX IF NOT EXISTS comments_jitemid ON comments (jitemid);
+CREATE INDEX IF NOT EXISTS comments_parentid ON comments (parentid);
+
+-- Resumability (§5.1). A killed run resumes; a completed run re-run is a no-op.
+CREATE TABLE IF NOT EXISTS sync_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`;

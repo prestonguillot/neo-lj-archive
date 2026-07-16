@@ -139,8 +139,26 @@ function selfDitemid(href: string, username: string): number | undefined {
   }
 }
 
+/**
+ * `</3` is a broken heart, not a tag.
+ *
+ * HTML5 puts `</` followed by a non-letter into the BOGUS COMMENT state: it
+ * swallows everything up to the next `>`, and when there isn't one, the rest of
+ * the entry. Entry 127053 signs off with a broken heart and the author's name,
+ * and both silently vanished — the tokenizer ate them.
+ *
+ * LiveJournal escapes these on the way in, and the live page still shows that
+ * sign-off. So this isn't faithful-to-a-2005-browser, it's a real divergence
+ * from both what the author wrote and what LJ renders. Escaping matches both.
+ *
+ * Only `</` needs it. A bare `<3` is a different tokenizer state — "invalid
+ * first character of tag name" — which emits the `<` as text and carries on, so
+ * hearts already survive.
+ */
+const escapeBogusEndTags = (html: string): string => html.replace(/<\/(?![a-zA-Z])/g, '&lt;/');
+
 export function renderBody(html: string, ctx: RenderContext): string {
-  const frag = parseFragment(html) as unknown as Node;
+  const frag = parseFragment(escapeBogusEndTags(html)) as unknown as Node;
 
   const visit = (node: Node): void => {
     // Snapshot: the transform replaces nodes as it goes.

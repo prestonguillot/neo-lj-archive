@@ -219,6 +219,36 @@ describe('renderBody — LJ markup (§5.3)', () => {
   });
 });
 
+describe('renderBody — emoticons that look like markup', () => {
+  // catches: a broken heart eating the end of the entry. HTML5 sends `</` plus a
+  // non-letter into the BOGUS COMMENT state, which swallows to the next `>` — and
+  // with none, the rest of the body. Entry 127053 signs off "</3, Preston" and
+  // lost the heart AND the name. The live LJ page still shows both, so this is a
+  // real divergence, not fidelity to a 2005 browser.
+  //
+  // Found by diffing against the live journal — the only oracle in this project
+  // that isn't derived from my own assumptions. No fixture test could catch it.
+  it('keeps a broken-heart emoticon and everything after it', () => {
+    const html = renderBody('I am angry.\n\n</3,\nPreston', ctx());
+    expect(html).toContain('Preston');
+    expect(html).toContain('3,');
+    expect(html).not.toContain('<!--');
+  });
+
+  it('keeps a plain heart too', () => {
+    // A different tokenizer state — this one already worked, and must stay working.
+    expect(renderBody('love you <3 bye', ctx())).toContain('bye');
+  });
+
+  // catches: over-escaping. Real closing tags must still close.
+  it('does not break real closing tags', () => {
+    const html = renderBody('<b>bold</b> after', ctx());
+    expect(html).toContain('<b>bold</b>');
+    expect(html).toContain('after');
+    expect(html).not.toContain('&lt;/b');
+  });
+});
+
 describe('renderBody — schemeless links', () => {
   // catches: <a href="www.foo.com"> resolving as a RELATIVE path. A 2003 habit:
   // with no scheme the browser resolves it against the current directory, so

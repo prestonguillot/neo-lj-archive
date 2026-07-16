@@ -102,15 +102,29 @@ function sample(): Row[] {
   return out;
 }
 
-/** Tags out, entities decoded, whitespace collapsed. Contiguous, order intact. */
+/**
+ * Tags out, entities decoded, whitespace collapsed. Contiguous, order intact.
+ *
+ * NUMERIC entities matter as much as the named ones. LJ stores apostrophes as
+ * &#39;, so the source reads `don&#39;t` while the renderer correctly emits
+ * `don't` \u2014 and comparing those raw strings scores a CORRECT render as data
+ * loss. That was the entirety of the "RENDERER-LOSS" on entry 403272: six
+ * apostrophes. A measurement that flags correct behaviour is worse than none,
+ * because it spends a human's attention on nothing.
+ */
 const plain = (s: string): string =>
   s
     .replace(/<[^>]*>/g, ' ')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
+    .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    // &amp; LAST: decoding it first turns a literal "&amp;#39;" into "&#39;" and
+    // then into an apostrophe, inventing a character the source never had.
+    .replace(/&amp;/g, '&')
     .replace(/[\s\u00A0]+/g, ' ')
     .trim();
 

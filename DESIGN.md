@@ -106,24 +106,60 @@ establish and nothing to cache. This is settled fact from the spike, not a
 guess.
 
 **Entries.** `LJ.XMLRPC.getevents` with `selecttype=syncitems`, batched. Records
-`itemid`, `anum`, `eventtime`, `logtime`, `subject`, `event` (body HTML),
-`security`, `allowmask`, and props (`current_mood`, `current_music`,
-`current_location`, `taglist`, `picture_keyword`).
+`itemid`, `anum`, `ditemid`, `eventtime`, `logtime`, `subject`, `event` (body
+HTML), `security`, `allowmask`, and props.
 
-`anum` matters more than it looks: LJ permalinks use `ditemid = itemid * 256 +
-anum`. We need it to resolve self-referential links (§7.3).
+`ditemid` is **returned directly** — no need to compute `itemid * 256 + anum`
+(an earlier draft had us deriving it; verified against a real capture).
+
+**Mood is two fields, not one.** `current_mood` is free text; `current_moodid`
+is a reference into LJ's own mood vocabulary. An entry can have **either or
+both** — in a 2004 sample, 4 of 20 entries carried `current_moodid` and only 2
+carried `current_mood`. Recording only `current_mood` silently drops the mood
+from entries that used a picklist mood, and §7.1 calls mood one of the things
+people actually miss. `LJ.XMLRPC.login` with `getmoods` returns the id→name
+table (~30KB); fetch it once and store it.
+
+Other props: `current_music`, `current_location`, `taglist`, `picture_keyword`.
 
 **Comments.** Not XML-RPC. `LJ.XMLRPC.sessiongenerate` mints an `ljsession`
-cookie, which is handed to plain GETs against `export_comments.bml` in two
-passes:
+cookie, handed to plain GETs against `export_comments.bml` in two passes:
 
-- `?get=comment_meta&startid=N` → `usermaps` (posterid → username) and comment
-  states.
-- `?get=comment_body&startid=N` → `jitemid` (the parent entry's itemid),
-  `parentid`, `subject`, `body`, `date`.
+- `?get=comment_meta&startid=N` → every comment's `id`, `jitemid`, `posterid`,
+  `state`, plus `maxid` and `usermaps` (posterid → username). Page size 10,000.
+- `?get=comment_body&startid=N` → `subject`, `body`, `date`, and `parentid`.
+  Page size 1,000.
 
-Paginated by `startid`; walk until `maxid`. States are `A`ctive, `D`eleted,
-`S`creened, `F`rozen — all archived, all rendered, each labeled.
+**Pagination: meta is the index; body fills in text.** For this journal, meta
+returns all 6,550 comments in a single page, giving the complete id set up
+front. Body is then paged by `startid = highest id received + 1` until the
+highest id reaches `maxid`.
+
+Do **not** page by a fixed stride. Comment ids have gaps — 6,550 comments span
+ids 1–6,570 — so `startid += 1000` skips real comments. And do **not** rely on
+the `nextid` element: the archived LJ server source emits one, but the live
+server does not send it (verified — absent from a full 999-comment body page).
+That mirror is a snapshot of the old open-source LJ and has diverged.
+
+**Shape facts, verified against a real capture** — every one of these is a bug
+if assumed otherwise:
+
+| Fact                                                                                            | Consequence if ignored                                                             |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Attributes are **single-quoted** (`id='2200'`), and the XML declaration mixes both quote styles | A regex/parser assuming `"` silently matches nothing                               |
+| `state` is emitted **only when not `A`**                                                        | Absent ≠ missing data; absent means Active                                         |
+| `parentid` is emitted **only when non-zero**, body mode only                                    | Absent means top-level. It is never `0`. Reading absent-as-0 flattens every thread |
+| `posterid` is **omitted for anonymous comments** (22 in this journal)                           | A non-null FK to `users` throws on real data                                       |
+| Deleted comments are **self-closing with no children** (44 of 999 in one page)                  | A parser expecting `<body>` on every comment dies                                  |
+| `event` bodies are **selectively base64-encoded** (1 of 20 recent entries)                      | Occasional mojibake, or a hard failure                                             |
+
+States: `A`ctive, `D`eleted, `S`creened, `F`rozen — all archived, all rendered,
+each labeled. Observed in this journal: 6,331 active, 217 deleted, 2 screened,
+0 frozen. (Screening was expected to be absent; it isn't. Rare ≠ never.)
+
+**`&props=1` is deliberately not requested.** It returns `<property>` elements
+carrying commenters' IP addresses — 194 other people's, and §4 is "owner's
+content, owner's rules."
 
 **Pacing.** Fixed conservative delay between LJ requests, configurable, default
 deliberately slow. At forty requests this is free insurance. On HTTP 403 the
@@ -217,14 +253,23 @@ Output is entirely relative-pathed and opens from `file://`.
 
 ## §6. Data model
 
+Nullability here is not incidental — every `NULL` below is a real shape LJ sends
+(§5.1), and getting one wrong is a bug on live data.
+
 ```sql
-entries      itemid PK, anum, eventtime, logtime, subject, body,
-             security, allowmask, mood, music, location,
+entries      itemid PK, anum, ditemid, eventtime, logtime, subject, body,
+             security, allowmask, mood, moodid, music, location,
              picture_keyword, props_json, fetched_at
+             -- ditemid comes from LJ; not computed
+             -- mood NULL-able, moodid NULL-able, independently
+moods        moodid PK, name, parent      -- LJ's vocabulary, fetched once
 entry_tags   itemid FK, tag                      -- (itemid, tag) PK
-users        posterid PK, username, is_deleted, is_anon, identity_type
-comments     id PK, jitemid FK->entries.itemid, parentid, posterid FK,
-             subject, body, date, state, picture_keyword, fetched_at
+users        posterid PK, username, is_deleted, identity_type
+comments     id PK, jitemid FK->entries.itemid,
+             parentid NULL,        -- NULL = top-level. Never 0.
+             posterid NULL FK,     -- NULL = anonymous. 22 in this journal.
+             subject NULL, body NULL,   -- both NULL when state='D'
+             date, state, fetched_at
 assets       hash PK, mime, byte_len, width, height, status, local_path
              -- status: ok | dead | suspect | poison
 asset_refs   id PK, hash FK, source_url, context, context_id,
@@ -235,13 +280,21 @@ sync_state   key PK, value
 
 Notes:
 
-- `comments.parentid = 0` for top-level; threading reconstructed at build time.
+- **`comments.parentid` is NULL for top-level, never 0.** LJ omits the attribute
+  entirely; an earlier draft of this document said `0` and would have made every
+  top-level comment look like a reply, flattening every thread.
+- **`comments.posterid` is nullable** — anonymous comments carry no `posterid` at
+  all (not `0`). A non-null FK throws on real data.
+- **`users` has no `is_anon`.** Anonymity is the absence of a poster, not a kind
+  of user — modelling it as a row invents an identity LJ never asserted.
+- `entries.mood` and `entries.moodid` are independent; either, both, or neither.
+  Resolve `moodid` through `moods` at build time, prefer `mood` when present.
 - `assets.status` carries the poison verdict; `build` renders `dead` and
   `poison` identically (placeholder + corpse metadata).
 - `asset_refs` is many-to-one against `assets` — that relationship _is_ the
   dedup, and its cardinality _is_ the poison signal.
 - No `deleted` flag on entries. The corpus is frozen; what's there is what there
-  is.
+  is. (Comments are different — they carry LJ's own `state`.)
 
 ## §7. The site
 
@@ -277,8 +330,14 @@ swappable stylesheet. Ship `default.css` (light/dark via
 ### 7.3 Link rewriting
 
 A build-time pass, no server involved. Links inside entries pointing at
-Preston's own journal are rewritten to local relative paths via
-`itemid = ditemid >> 8`. Self-references stop dead-ending.
+Preston's own journal are rewritten to local relative paths.
+
+An LJ permalink carries the `ditemid` (`evilgoatbob.livejournal.com/12345.html`
+→ ditemid 12345), and `entries.ditemid` is stored directly from LJ (§5.1), so
+this is a lookup, not arithmetic. `itemid = ditemid >> 8` holds, but deriving it
+is unnecessary and would be one more place to be subtly wrong.
+
+Self-references stop dead-ending.
 
 Links to _other_ people's LiveJournals are left alone. They're external, they're
 probably dead, and that's not ours to fix.

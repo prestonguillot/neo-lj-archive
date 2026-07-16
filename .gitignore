@@ -22,3 +22,7 @@ playwright-report/
 
 # --- OS --------------------------------------------------------------------
 .DS_Store
+
+# Raw LJ captures. Real private entries + real usernames. NEVER committed —
+# scrub into tests/fixtures/ instead (DESIGN.md §10).
+/fixtures-raw/

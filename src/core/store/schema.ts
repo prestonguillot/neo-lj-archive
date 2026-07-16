@@ -99,4 +99,45 @@ CREATE TABLE IF NOT EXISTS sync_state (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- One row per distinct set of BYTES, keyed by their hash (§5.2).
+--
+-- Content-addressing is not a storage nicety — it is the poison detector. When
+-- 142 distinct URLs on one host all hash to the same row, that host is serving a
+-- placeholder, and this table is where that becomes visible for free.
+CREATE TABLE IF NOT EXISTS assets (
+  hash       TEXT PRIMARY KEY,        -- sha256 of the bytes
+  mime       TEXT NOT NULL,           -- SNIFFED from the bytes, never the header
+  byte_len   INTEGER NOT NULL,
+  width      INTEGER,                 -- NULL when undecodable
+  height     INTEGER,
+  -- ok | dead | suspect | poison. The build stage renders dead and poison
+  -- identically: a placeholder carrying the corpse (§5.2).
+  -- (No backticks in here: this whole schema is a template literal, and a
+  --  markdown habit terminates the string.)
+  status     TEXT NOT NULL,
+  local_path TEXT,                    -- NULL for dead: there are no bytes to keep
+  fetched_at TEXT NOT NULL
+);
+
+-- One row per REFERENCE. Many-to-one against assets — and that cardinality IS
+-- the dedup and the poison signal, not bookkeeping.
+CREATE TABLE IF NOT EXISTS asset_refs (
+  id          INTEGER PRIMARY KEY,
+  hash        TEXT REFERENCES assets (hash),  -- NULL until fetched, or if unfetchable
+  source_url  TEXT NOT NULL,
+  host        TEXT,                   -- denormalised: every poison query groups by it
+  context     TEXT NOT NULL,          -- entry | comment | userpic
+  context_id  INTEGER NOT NULL,
+  -- Present on only 24 of 608 refs. The dead-image placeholder is mostly URL +
+  -- date, because 2000s LJ users didn't write alt text (§5.2).
+  alt_text    TEXT,
+  http_status INTEGER,
+  error       TEXT,                   -- why it died, for the placeholder to carry
+  fetched_at  TEXT,
+  UNIQUE (source_url, context, context_id)
+);
+
+CREATE INDEX IF NOT EXISTS asset_refs_hash ON asset_refs (hash);
+CREATE INDEX IF NOT EXISTS asset_refs_host ON asset_refs (host);
 `;

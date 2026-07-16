@@ -18,15 +18,12 @@
  *   WORKS  Does the renderer drop what archive.db holds? Offline, no network.
  *          This is the <lj-embed> class.
  *
- *   BROKEN Is archive.db complete? Only the live page can say — but isolating
- *          LJ's rendering of the entry body is unsolved here. Seven heuristics
- *          in, it still reported loss on 6 of 7 entries whose text is provably
- *          intact, because the locator lands on a wrapper holding the comments
- *          and chrome. Rendered-vs-rendered (to neutralise lj-user, cuts, polls)
- *          did not fix it either. It is switched OFF rather than shipped noisy:
- *          a check that cries wolf on 85% of entries would bury the one real
- *          finding it exists to surface. Fixing it needs a real look at LJ's S2
- *          markup, not another heuristic.
+ *   WORKS  Is archive.db complete? Compares LJ's rendering of the body against
+ *          ours. Seven heuristics tried to infer the body container and every
+ *          one cried wolf on entries that were provably intact. Then I looked at
+ *          the markup: it is div.entry_text, identical on every entry. The
+ *          lesson is the whole project's lesson — look at the thing rather than
+ *          reason about it from a distance.
  *
  * Auth is a SAVED SESSION, not a password (§8: never store credentials, use them
  * only to mint auth state). Log in once by hand in a real browser:
@@ -135,6 +132,45 @@ const words = (s: string): string[] =>
     .filter((w) => w.length > 3);
 
 /**
+ * Letters and digits only. Immune to tags, whitespace and tokenisation — the
+ * three things that made every earlier comparison lie.
+ *
+ * Word-splitting could never work here: plain() turns tags into SPACES while the
+ * DOM's textContent turns them into NOTHING, so LJ's `<b>hello</b><i>world</i>`
+ * is one token and ours is two. On a 20k entry that manufactured 533 phantom
+ * "missing words" on an entry that was perfectly intact.
+ */
+const stream = (s: string): string =>
+  plain(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+/**
+ * The longest run of LJ's letters that is absent from ours, in order.
+ *
+ * Subsequence, not containment: the archive deliberately ADDS text LJ never had
+ * — cut labels, "image lost" markers, poll notices — and those insertions break
+ * contiguity while losing nothing. Loss is the reverse: LJ having letters we
+ * don't. Over thousands of characters, matching by coincidence is impossible.
+ */
+const missingRun = (lj: string, ours: string): number => {
+  let i = 0;
+  let worst = 0;
+  let run = 0;
+  for (const ch of lj) {
+    const at = ours.indexOf(ch, i);
+    if (at === -1) {
+      run++;
+      worst = Math.max(worst, run);
+    } else {
+      i = at + 1;
+      run = 0;
+    }
+  }
+  return worst;
+};
+
+/**
  * Log in with the password and SAVE the session.
  *
  * The saving is the point. Re-authenticating per run is what got LJ's web login
@@ -211,6 +247,8 @@ async function main(): Promise<void> {
 
   const report: Record<string, unknown>[] = [];
   let renderLoss = 0;
+  let dbLoss = 0;
+  let notLocated = 0;
   let picsFound = 0;
   let embedUrls = 0;
 
@@ -225,19 +263,29 @@ async function main(): Promise<void> {
 
     // Q2, offline: does the renderer keep what the DB holds?
     const stored = words(r.body);
-    const rendered = new Set(words(renderBody(r.body, ctxRender)));
-    const droppedByRenderer = stored.filter((w) => !rendered.has(w));
+    const renderedHtml = renderBody(r.body, ctxRender);
+    const renderedWords = new Set(words(renderedHtml));
+    const droppedByRenderer = stored.filter((w) => !renderedWords.has(w));
 
     await page.goto(`https://${USER}.livejournal.com/${r.ditemid}.html`, {
       waitUntil: 'domcontentloaded',
     });
 
-    // The db-completeness diff lived here and is GONE, not commented out — see
-    // the header. Every version of it reported loss on entries whose text is
-    // provably intact, because nothing here reliably isolates LJ's rendering of
-    // the body from the comments and chrome around it. Dead code that computes
-    // a number nobody may trust is worse than no code: someone eventually reads
-    // the number.
+    // Is archive.db complete? Ask div.entry_text — LJ's own name for the body,
+    // read off the markup rather than inferred. Every heuristic that guessed at
+    // this container grabbed the comments and chrome too, and reported loss on
+    // entries that were fine.
+    const liveBody = await page
+      .locator('div.entry_text')
+      .first()
+      .textContent()
+      .catch(() => null);
+    // Compare against our RENDERED text, not the stored source: LJ resolves
+    // <lj user="x"> to the word "x" and so do we, while the raw source has only
+    // a tag. Source-vs-rendered would score every mention and cut as loss.
+    const gap = liveBody === null ? -1 : missingRun(stream(liveBody), stream(renderedHtml));
+    if (liveBody === null) notLocated++;
+    else if (gap > 0) dbLoss++;
 
     // The harvest the API won't give us.
     const pics = await page.$$eval('img', (els) =>
@@ -257,11 +305,20 @@ async function main(): Promise<void> {
       ditemid: r.ditemid,
       shape: r.shape,
       renderer_dropped_words: droppedByRenderer.length,
+      db_missing_run: gap,
+      bodyLocated: liveBody !== null,
       userpics: [...new Set(pics)],
       embeds: frames,
     });
 
-    const flag = droppedByRenderer.length > 0 ? ' RENDERER-LOSS' : '';
+    const flag =
+      droppedByRenderer.length > 0
+        ? ' RENDERER-LOSS'
+        : liveBody === null
+          ? ' BODY-NOT-FOUND'
+          : gap > 0
+            ? ` DB-LOSS(${gap})`
+            : ' PARITY';
     console.log(
       `${String(i + 1).padStart(3)}/${rows.length} ${r.ditemid} [${r.shape}] ` +
         `pics:${new Set(pics).size} embeds:${frames.length}${flag}`,
@@ -276,6 +333,11 @@ async function main(): Promise<void> {
 
   console.log(`\n--- ${rows.length} entries sampled ---`);
   console.log(`renderer dropped content:  ${renderLoss}`);
+  console.log(
+    `AT FULL PARITY WITH LJ:    ${rows.length - notLocated - dbLoss}/${rows.length - notLocated} compared`,
+  );
+  console.log(`diverging from LJ:         ${dbLoss}`);
+  console.log(`body not found on page:    ${notLocated}`);
   console.log(`userpic urls harvested:    ${picsFound}`);
   console.log(`embed urls harvested:      ${embedUrls}`);
   console.log('\nreport: archive/audit/vs-live.json (gitignored — private content)');

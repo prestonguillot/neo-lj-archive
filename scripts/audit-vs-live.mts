@@ -43,11 +43,37 @@
  */
 import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { renderBody } from '../src/core/build/render.js';
 
 /** Live auth state. Gitignored with the rest of archive/, never committed. */
 const SESSION = './archive/session.json';
+
+/**
+ * What has already been audited, and how it came out.
+ *
+ * The point of chunking: each run must spend its requests on entries nobody has
+ * looked at yet. Re-auditing the same 14 would rediscover the same bugs and find
+ * no new ones, while still paying the full ban risk. Entries that reached parity
+ * are retired; the ones that diverged stay listed so a fix can be re-checked on
+ * purpose (--recheck) rather than by accident.
+ */
+const STATE = './archive/audit/state.json';
+
+interface Verdict {
+  shape: string;
+  gap: number; // 0 = parity, >0 = chars LJ shows that we don't, -1 = body not found
+  note?: string;
+}
+type State = Record<string, Verdict>;
+
+const loadState = (): State =>
+  existsSync(STATE) ? (JSON.parse(readFileSync(STATE, 'utf8')) as State) : {};
+
+const saveState = (s: State): void => {
+  mkdirSync('./archive/audit', { recursive: true });
+  writeFileSync(STATE, JSON.stringify(s, null, 2));
+};
 
 const USER = process.env['LJ_USER'] ?? 'evilgoatbob';
 const SAMPLE = Number(process.argv[2] ?? 40);
@@ -69,7 +95,7 @@ interface Row {
  * unclosed embed, a cut wrapping a table, a poll — and a uniform random sample
  * of 40 from 1,547 would very likely contain none of them.
  */
-function sample(): Row[] {
+function sample(seen: Set<string>): Row[] {
   const shapes: [string, string][] = [
     ['lj-embed', "body LIKE '%<lj-embed%'"],
     ['lj-poll', "body LIKE '%<lj-poll%'"],
@@ -82,17 +108,21 @@ function sample(): Row[] {
     ['plain', '1=1'],
   ];
   const per = Math.max(2, Math.floor(SAMPLE / shapes.length));
-  const seen = new Set<number>();
+  const picked = new Set<number>();
   const out: Row[] = [];
   for (const [shape, where] of shapes) {
+    // Pull a wide net, then skip what's already audited. Ordering by length
+    // DESC and taking the top N would hand every run the SAME longest entries
+    // forever — the chunking would explore nothing.
     const rows = db
       .prepare(
-        `SELECT ditemid, itemid, body FROM entries WHERE ${where} ORDER BY LENGTH(body) DESC LIMIT ?`,
+        `SELECT ditemid, itemid, body FROM entries WHERE ${where} ORDER BY LENGTH(body) DESC`,
       )
-      .all(per * 2) as Omit<Row, 'shape'>[];
+      .all() as Omit<Row, 'shape'>[];
     for (const r of rows) {
-      if (seen.has(r.ditemid) || out.filter((o) => o.shape === shape).length >= per) continue;
-      seen.add(r.ditemid);
+      if (picked.has(r.ditemid) || seen.has(String(r.ditemid))) continue;
+      if (out.filter((o) => o.shape === shape).length >= per) break;
+      picked.add(r.ditemid);
       out.push({ ...r, shape });
     }
   }
@@ -223,8 +253,28 @@ async function main(): Promise<void> {
     await login(pw);
   }
 
-  const rows = sample();
-  console.log(`sampling ${rows.length} entries by shape, ${PACE_MS}ms apart\n`);
+  const state = loadState();
+  const recheck = process.argv.includes('--recheck');
+  // --recheck re-runs only the entries that DIVERGED, to confirm a fix. The
+  // default run skips everything already audited and spends the chunk on new
+  // ground, which is the entire point of chunking.
+  const seen = recheck
+    ? new Set(
+        Object.entries(state)
+          .filter(([, v]) => v.gap === 0)
+          .map(([k]) => k),
+      )
+    : new Set(Object.keys(state));
+  const rows = sample(seen);
+  if (rows.length === 0) {
+    console.log(`nothing new to audit — ${Object.keys(state).length} entries already done.`);
+    return;
+  }
+  const done = Object.keys(state).length;
+  console.log(
+    `${done} entries audited so far. This chunk: ${rows.length} ${recheck ? 'RE-CHECKS' : 'NEW'}, ` +
+      `${PACE_MS}ms apart\n`,
+  );
 
   const b = await chromium.launch();
   let ctx = await b.newContext({ storageState: SESSION });
@@ -278,7 +328,15 @@ async function main(): Promise<void> {
     const liveBody = await page
       .locator('div.entry_text')
       .first()
-      .textContent()
+      .evaluate((e) => {
+        // div.entry_text also contains LJ's "Tags:" footer, which our archive
+        // renders in the entry HEADER instead. Leaving it in scores every tagged
+        // entry as data loss when the tags are right there on our page, just
+        // somewhere else. Clone so the live DOM is untouched.
+        const c = e.cloneNode(true) as HTMLElement;
+        for (const t of c.querySelectorAll('div.ljtags')) t.remove();
+        return c.textContent ?? '';
+      })
       .catch(() => null);
     // Compare against our RENDERED text, not the stored source: LJ resolves
     // <lj user="x"> to the word "x" and so do we, while the raw source has only
@@ -286,6 +344,8 @@ async function main(): Promise<void> {
     const gap = liveBody === null ? -1 : missingRun(stream(liveBody), stream(renderedHtml));
     if (liveBody === null) notLocated++;
     else if (gap > 0) dbLoss++;
+    // Record every verdict, so the next chunk starts where this one stopped.
+    state[String(r.ditemid)] = { shape: r.shape, gap: liveBody === null ? -1 : gap };
 
     // The harvest the API won't give us.
     const pics = await page.$$eval('img', (els) =>
@@ -327,11 +387,14 @@ async function main(): Promise<void> {
   }
 
   await b.close();
+  saveState(state);
 
   mkdirSync('./archive/audit', { recursive: true });
   writeFileSync('./archive/audit/vs-live.json', JSON.stringify(report, null, 2));
 
-  console.log(`\n--- ${rows.length} entries sampled ---`);
+  const all = Object.values(state);
+  const parity = all.filter((v) => v.gap === 0).length;
+  console.log(`\n--- this chunk: ${rows.length} entries ---`);
   console.log(`renderer dropped content:  ${renderLoss}`);
   console.log(
     `AT FULL PARITY WITH LJ:    ${rows.length - notLocated - dbLoss}/${rows.length - notLocated} compared`,
@@ -340,7 +403,17 @@ async function main(): Promise<void> {
   console.log(`body not found on page:    ${notLocated}`);
   console.log(`userpic urls harvested:    ${picsFound}`);
   console.log(`embed urls harvested:      ${embedUrls}`);
-  console.log('\nreport: archive/audit/vs-live.json (gitignored — private content)');
+  console.log(`\n--- cumulative across all chunks ---`);
+  console.log(`  audited:        ${all.length} of 1547`);
+  console.log(`  at parity:      ${parity}`);
+  console.log(`  diverging:      ${all.length - parity}`);
+  const open = Object.entries(state).filter(([, v]) => v.gap > 0);
+  if (open.length) {
+    console.log('\n  still diverging (re-check with --recheck after a fix):');
+    for (const [id, v] of open.sort((a, b) => b[1].gap - a[1].gap))
+      console.log(`    ${id} [${v.shape}] ${v.gap} chars`);
+  }
+  console.log('\nstate: archive/audit/state.json — next run picks up new entries');
 }
 
 await main();

@@ -333,6 +333,34 @@ export async function buildSite(
       ) as { n: number }[]
     )[0]?.n ?? 0;
 
+  // Recovered embed URLs, per entry, in appearance order (§11 M4).
+  //
+  // The export had only <lj-embed id="X">; the real target was scraped from the
+  // rendered page into entry_embeds. LJ's proxy URL carries the video: for
+  // youtube, ?source=youtube&vid=ID rebuilds a durable watch link (the video id
+  // outlives the proxy). The 7 without a vid held only session tokens and stay
+  // as plain "media was here" markers.
+  const embedUrlOf = (proxy: string): string | undefined => {
+    try {
+      const u = new URL(proxy);
+      const vid = u.searchParams.get('vid');
+      if (u.searchParams.get('source') === 'youtube' && vid !== null && vid !== '') {
+        return `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`;
+      }
+    } catch {
+      /* a malformed proxy URL just falls through to the plain marker */
+    }
+    return undefined;
+  };
+  const embedsByEntry = new Map<number, (string | undefined)[]>();
+  for (const r of store.query(
+    'SELECT ditemid, idx, url FROM entry_embeds ORDER BY ditemid, idx',
+  ) as { ditemid: number; idx: number; url: string }[]) {
+    const list = embedsByEntry.get(r.ditemid) ?? [];
+    list[r.idx] = embedUrlOf(r.url);
+    embedsByEntry.set(r.ditemid, list);
+  }
+
   const heldDitemids = new Set(entries.map((e) => e.ditemid));
   const tagsByEntry = new Map<number, string[]>();
   for (const t of tagRows) tagsByEntry.set(t.itemid, [...(tagsByEntry.get(t.itemid) ?? []), t.tag]);
@@ -411,9 +439,11 @@ export async function buildSite(
     const root = rootFor(rel);
     const p = parts(e.eventtime);
 
+    const entryEmbeds = embedsByEntry.get(e.ditemid) ?? [];
     const ctx = {
       // opt_preformatted: LJ leaves this body's newlines alone, so we must too.
       preformatted: /"opt_preformatted"/.test(e.props_json ?? ''),
+      embedUrl: (i: number) => entryEmbeds[i],
       localFor: (u: string) => live.get(u),
       deadReason: (u: string) => dead.get(u),
       username: config.username,

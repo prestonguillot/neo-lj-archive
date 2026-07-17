@@ -28,6 +28,17 @@ export interface RenderContext {
    * turning newlines into breaks at render time.
    */
   readonly preformatted?: boolean;
+  /**
+   * The recovered URL for the Nth <lj-embed> in this body, in document order, or
+   * undefined if it couldn't be recovered.
+   *
+   * The export gives only <lj-embed id="X">, where the id is LJ's internal embed
+   * key, NOT the video. The real URL was scraped from the rendered page and lives
+   * in entry_embeds keyed by order of appearance — the same ordinal the renderer
+   * hits these tags in. 21 of 28 resolve to a YouTube link; the rest carried only
+   * dead session tokens.
+   */
+  readonly embedUrl?: (index: number) => string | undefined;
 }
 
 interface Node {
@@ -281,6 +292,9 @@ function addBreaks(node: Node, inNoBreak: boolean): void {
 export function renderBody(html: string, ctx: RenderContext): string {
   const frag = parseFragment(escapeBogusEndTags(html)) as unknown as Node;
 
+  // Which <lj-embed> we're on, so ctx.embedUrl gets them in document order.
+  let embedSeen = 0;
+
   // Before the transform: the LJ tags below rebuild subtrees, and a newline that
   // has already become a <br> element survives that intact, where a raw \n in a
   // text node would be at the mercy of every later reparent.
@@ -377,14 +391,33 @@ export function renderBody(html: string, ctx: RenderContext): string {
       for (const c of children) visit(c);
       return;
     } else if (tag === 'lj-embed' || tag === 'iframe' || tag === 'object' || tag === 'embed') {
-      // Kept as a note with its reference, never localized: there is no
-      // meaningful local copy of an embedded video (§5.2).
-      const url = attr(node, 'src') ?? attr(node, 'data') ?? attr(node, 'id');
-      const marker = el(
-        'span',
-        [{ name: 'class', value: 'embed-lost' }],
-        [text(`▶ embedded media${url !== undefined ? ` (${url})` : ''}`)],
-      );
+      // There is no meaningful LOCAL copy of an embedded video (§5.2), but the
+      // link is worth keeping: the video may still exist even though the entry's
+      // copy of it doesn't.
+      const recovered = tag === 'lj-embed' ? ctx.embedUrl?.(embedSeen++) : undefined;
+      const rawUrl = attr(node, 'src') ?? attr(node, 'data') ?? attr(node, 'id');
+      const marker =
+        recovered !== undefined
+          ? el(
+              'span',
+              [{ name: 'class', value: 'embed-lost' }],
+              [
+                text('▶ '),
+                el(
+                  'a',
+                  [
+                    { name: 'href', value: recovered },
+                    { name: 'class', value: 'embed-link' },
+                  ],
+                  [text('embedded video')],
+                ),
+              ],
+            )
+          : el(
+              'span',
+              [{ name: 'class', value: 'embed-lost' }],
+              [text(`▶ embedded media${rawUrl !== undefined ? ` (${rawUrl})` : ''}`)],
+            );
 
       // <lj-embed> is VOID and the others are not, so they cannot share a branch.
       // In this corpus lj-embed opens 28 times and closes ZERO; <object> and

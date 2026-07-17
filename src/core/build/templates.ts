@@ -376,6 +376,16 @@ export const RETROSPECT = `
 </section>
 
 <section class="viz">
+  <h2>What was playing</h2>
+  <p class="viz-note"><%= musicTotal %> entries noted the music. Click an artist to read them.</p>
+  <ul class="bars">
+    <% artists.forEach(function (a) { %>
+      <li><a class="k" href="<%= a.href %>"><%= a.name %></a><span class="bar"><i style="width: <%= a.pct %>%"></i></span><span class="v"><%= a.n %></span></li>
+    <% }) %>
+  </ul>
+</section>
+
+<section class="viz">
   <h2>Records</h2>
   <ul class="facts">
     <li><a href="<%= longest.href %>"><b><%= longest.words %></b> words</a> &mdash; the longest entry, <%= longest.date %>.</li>
@@ -394,6 +404,7 @@ export const RETROSPECT = `
     <li><a href="<%= userpicsHref %>"><b><%= userpicCount %></b> userpics</a> across <%= facesPeople %> people.</li>
     <li><a href="<%= peopleHref %>"><b><%= people %></b> people</a> left comments<% if (anon) { %>, plus <%= anon %> anonymous<% } %>.</li>
     <li><a href="<%= tagsHref %>"><b><%= tagTotal %></b> tags</a> on <%= taggedEntries %> entries &mdash; you used nearly every one exactly once.</li>
+    <li><b><%= artistTotal %></b> artists and <b><%= songTotal %></b> tracks &mdash; <%= oncePct %>% of the artists turned up exactly once.</li>
   </ul>
 </section>
 `;
@@ -420,6 +431,19 @@ export const SLICE = `
 <ul class="entry-list">
   <% entries.forEach(function (e) { %>
     <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %></a></li>
+  <% }) %>
+</ul>
+<p><a href="<%= backHref %>">&larr; Retrospect</a></p>
+`;
+
+/** Everything you played while writing, and when (§11 M4). */
+export const ARTIST = `
+<h1><%= name %></h1>
+<p class="muted">Playing while you wrote <%= count %> <%= count === 1 ? 'entry' : 'entries' %><% if (songCount) { %>, <%= songCount %> <%= songCount === 1 ? 'track' : 'tracks' %><% } %>.</p>
+<ul class="entry-list">
+  <% entries.forEach(function (e) { %>
+    <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %>
+      <% if (e.song) { %><span class="c"><%= e.song %></span><% } %></a></li>
   <% }) %>
 </ul>
 <p><a href="<%= backHref %>">&larr; Retrospect</a></p>

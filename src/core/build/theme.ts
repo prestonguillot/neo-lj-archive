@@ -354,6 +354,50 @@ table.cal td span { display: block; padding: .25rem 0; color: var(--ink-2); opac
 .tag-cloud span { font-size: 10px; color: var(--ink-2); }
 
 .recent { margin-bottom: 3rem; }
+
+/* --- M4: on this day, people, faces ------------------------------------ */
+.otd-year { margin-bottom: 2rem; }
+.otd-year h2 {
+  font-family: var(--meta); font-size: 11px; color: var(--rose);
+  text-transform: uppercase; letter-spacing: .12em;
+  border-bottom: 1px solid var(--rule); padding-bottom: .3rem; margin-bottom: .2rem;
+}
+
+.people { list-style: none; padding: 0; margin: 0; max-width: 62ch; }
+.people li {
+  display: flex; align-items: center; gap: .65rem;
+  padding: .35rem 0; border-bottom: 1px solid var(--rule);
+}
+.people .n { margin-left: auto; font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
+.userpic-sm.nopic { background: var(--sunk); border: 1px dashed var(--rule); }
+
+.faces { margin-bottom: 2.5rem; }
+.face-grid { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: .6rem; }
+.face-grid li { display: flex; flex-direction: column; align-items: center; gap: .25rem; width: 100px; }
+.face-grid img {
+  width: 100px; height: 100px; object-fit: contain;
+  background: var(--card); border: 1px solid var(--rule); border-radius: var(--radius);
+}
+.face-grid .n {
+  font-family: var(--meta); font-size: 9px; color: var(--ink-2);
+  text-align: center; word-break: break-all; line-height: 1.3;
+}
+
+/*
+ * The heatmap. A decade at a glance: 2004 has 348 entries and 2010 has 5, and
+ * that shape IS the story of the journal — no caption says it better.
+ */
+.heat { display: flex; flex-direction: column; gap: .25rem; margin: 0 0 2.5rem; max-width: 62ch; }
+.heat-row { display: flex; align-items: center; gap: .5rem; font-family: var(--meta); font-size: 10px; }
+.heat-row .y { min-width: 2.6rem; color: var(--ink-2); text-decoration: none; }
+.heat-row .y:hover { color: var(--rose); }
+.heat-cells { display: flex; gap: 1px; flex: 1; }
+.heat-cells i { flex: 1; height: 11px; border-radius: 1px; background: var(--sunk); }
+/* Four steps, not a gradient: the eye reads buckets, not interpolation. */
+.heat-cells i[data-n="1"] { background: color-mix(in srgb, var(--rose) 25%, var(--sunk)); }
+.heat-cells i[data-n="2"] { background: color-mix(in srgb, var(--rose) 55%, var(--sunk)); }
+.heat-cells i[data-n="3"] { background: var(--rose); }
+.heat-row .t { min-width: 2.5rem; text-align: right; color: var(--ink-2); }
 .years, .tag-cloud, .year-grid, .months { max-width: 62ch; }
 .years h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; }
 

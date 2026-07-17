@@ -163,6 +163,8 @@ const monthAnchor = (m: number): string => `m${pad(m)}`;
 const tagPathVia = (slugs: Map<string, string>, tag: string): string =>
   `tags/${slugs.get(tag) ?? slugify(tag)}.html`;
 
+const otdPath = (m: number, d: number): string => `onthisday/${pad(m)}-${pad(d)}.html`;
+
 /** How many '../' to get from a page back to the site root. */
 const rootFor = (path: string): string => '../'.repeat(path.split('/').length - 1);
 
@@ -269,6 +271,27 @@ export async function buildSite(
 
   const railYears = [...new Set(entries.map((e) => parts(e.eventtime).y))].sort();
 
+  /**
+   * A decade at a glance, on ONE scale.
+   *
+   * Scaling each year to its own peak — which is what this did first — made
+   * 1984's single entry and 2010's five burn exactly as hot as 2004's 348. Every
+   * row equally busy, which is precisely the opposite of the point: the shape of
+   * the decline IS the story here, and a heatmap whose rows can't be compared to
+   * each other is decoration.
+   */
+  const monthCount = (y: number, m: number): number =>
+    entries.filter((e) => {
+      const p = parts(e.eventtime);
+      return p.y === y && p.m === m;
+    }).length;
+
+  // "On this day" in the rail needs a date, and a build must be reproducible —
+  // the same archive.db has to produce the same bytes on any day. So it points at
+  // the date of the NEWEST entry, not at whatever today happens to be.
+  const newest = parts(entries[entries.length - 1]?.eventtime ?? '2004-01-01 00:00');
+  const todayHref = `${pad(newest.m)}-${pad(newest.d)}.html`;
+
   const page = (rel: string, title: string, content: string): Promise<void> =>
     write(
       rel,
@@ -278,6 +301,7 @@ export async function buildSite(
         root: rootFor(rel),
         content,
         railYears,
+        todayHref,
         ...totals,
       }),
     );
@@ -396,6 +420,20 @@ export async function buildSite(
   const yearCount = (y: number): number => entries.filter((e) => parts(e.eventtime).y === y).length;
 
   const yearList = years.map((y) => ({ year: y, count: yearCount(y), href: '' }));
+
+  // One grid, one peak, so the rows mean something next to each other.
+  const heatGrid = yearList.map((y) => MONTHS.map((_, mi) => monthCount(y.year, mi + 1)));
+  const heatPeak = Math.max(1, ...heatGrid.flat());
+  const heatRows = yearList.map((y, yi) => ({
+    year: y.year,
+    href: yearPath(y.year),
+    total: y.count,
+    cells: (heatGrid[yi] ?? []).map((n, mi) => ({
+      // Four buckets, not a gradient: the eye reads steps, not interpolation.
+      level: n === 0 ? 0 : n >= heatPeak * 0.5 ? 3 : n >= heatPeak * 0.2 ? 2 : 1,
+      label: `${MONTHS[mi]} ${y.year}: ${n} ${n === 1 ? 'entry' : 'entries'}`,
+    })),
+  }));
 
   await page(
     'calendar/index.html',
@@ -516,6 +554,146 @@ export async function buildSite(
   }
   report({ kind: 'done', task: 'tags', summary: `${sortedTags.length} tags` });
 
+  // --- on this day, across years (§11 M4) --------------------------------
+  //
+  // The navigation a diary actually wants. The calendar answers "what did I
+  // write in March 2005"; nothing answered "what was I doing on this date,
+  // ever". Only dates that HAVE entries get a page — 366 pages, 271 of them
+  // empty, would be 271 invitations to a dead end.
+  report({ kind: 'start', task: 'on this day' });
+  const byMonthDay = new Map<string, EntryRow[]>();
+  for (const e of entries) {
+    const p = parts(e.eventtime);
+    const k = `${pad(p.m)}-${pad(p.d)}`;
+    byMonthDay.set(k, [...(byMonthDay.get(k) ?? []), e]);
+  }
+  const otdKeys = [...byMonthDay.keys()].sort();
+  for (const [i, key] of otdKeys.entries()) {
+    const [ms, ds] = key.split('-');
+    const m = Number(ms);
+    const d = Number(ds);
+    const rel = otdPath(m, d);
+    const root = rootFor(rel);
+    const mine = byMonthDay.get(key) ?? [];
+    const byYear = new Map<number, EntryRow[]>();
+    for (const e of mine) {
+      const y = parts(e.eventtime).y;
+      byYear.set(y, [...(byYear.get(y) ?? []), e]);
+    }
+    // Wraps around, so the spine never dead-ends on Jan 1 or Dec 31.
+    const prev = otdKeys[(i - 1 + otdKeys.length) % otdKeys.length]!;
+    const next = otdKeys[(i + 1) % otdKeys.length]!;
+    const label = (k: string): string => {
+      const [mm, dd] = k.split('-');
+      return `${MONTHS[Number(mm) - 1]} ${Number(dd)}`;
+    };
+    await page(
+      rel,
+      `${MONTHS[m - 1]} ${d}`,
+      render(T.ONTHISDAY, {
+        displayDate: `${MONTHS[m - 1]} ${d}`,
+        count: mine.length,
+        yearCount: byYear.size,
+        years: [...byYear.entries()]
+          .sort((a, b) => b[0] - a[0])
+          .map(([year, es]) => ({
+            year,
+            entries: es.map((e) => {
+              const p = parts(e.eventtime);
+              return {
+                href: root + entryPath(e.ditemid),
+                time: `${p.hh}:${p.mm}`,
+                subject: esc(e.subject ?? '(no subject)'),
+              };
+            }),
+          })),
+        prevHref: root + otdPath(Number(prev.split('-')[0]), Number(prev.split('-')[1])),
+        prevLabel: label(prev),
+        nextHref: root + otdPath(Number(next.split('-')[0]), Number(next.split('-')[1])),
+        nextLabel: label(next),
+      }),
+    );
+    pages++;
+  }
+  report({ kind: 'done', task: 'on this day', summary: `${otdKeys.length} dates` });
+
+  // --- people (§11 M4) --------------------------------------------------
+  report({ kind: 'start', task: 'people' });
+  const perPerson = store.query(
+    `SELECT u.posterid AS id, u.username AS name, COUNT(*) AS n
+       FROM comments c JOIN users u ON u.posterid = c.posterid
+      GROUP BY c.posterid ORDER BY n DESC, u.username`,
+  ) as { id: number; name: string; n: number }[];
+  // Their most-used pic: the face you'd actually recognise them by.
+  const faceFor = new Map(
+    (
+      store.query(
+        `SELECT u.userid AS id, a.local_path AS p, COUNT(*) AS n
+           FROM comment_userpics cu
+           JOIN userpics u ON u.picid = cu.picid
+           JOIN assets a ON a.hash = u.hash AND a.status = 'ok'
+          GROUP BY u.userid ORDER BY n DESC`,
+      ) as { id: number; p: string; n: number }[]
+    ).map((r) => [r.id, r.p]),
+  );
+  const anonCount =
+    (store.query('SELECT COUNT(*) AS n FROM comments WHERE posterid IS NULL') as { n: number }[])[0]
+      ?.n ?? 0;
+  await page(
+    'people/index.html',
+    'People',
+    render(T.PEOPLE, {
+      root: rootFor('people/index.html'),
+      count: perPerson.length,
+      total: perPerson.reduce((a, p) => a + p.n, 0),
+      anon: anonCount,
+      people: perPerson.map((p) => ({
+        name: esc(p.name),
+        n: p.n,
+        href: esc(journalUrl(p.name)),
+        pic: faceFor.get(p.id),
+      })),
+    }),
+  );
+  pages++;
+  report({ kind: 'done', task: 'people', summary: `${perPerson.length} people` });
+
+  // --- userpic gallery (§11 M4) -----------------------------------------
+  report({ kind: 'start', task: 'faces' });
+  // "Mine" = every userid that is NOT a commenter. Derived from the users table
+  // rather than from a subquery on the first row of entry_userpics, which was
+  // silently betting that the first row happened to be the author's.
+  const myPics = store.query(
+    `SELECT a.local_path AS p, COUNT(eu.ditemid) AS n
+       FROM userpics u
+       JOIN assets a ON a.hash = u.hash AND a.status = 'ok'
+       LEFT JOIN entry_userpics eu ON eu.picid = u.picid
+      WHERE u.userid NOT IN (SELECT posterid FROM users)
+      GROUP BY u.picid ORDER BY n DESC`,
+  ) as { p: string; n: number }[];
+  const theirPics = store.query(
+    `SELECT a.local_path AS p, us.username AS who
+       FROM userpics u
+       JOIN assets a ON a.hash = u.hash AND a.status = 'ok'
+       JOIN users us ON us.posterid = u.userid
+      GROUP BY u.picid ORDER BY us.username`,
+  ) as { p: string; who: string }[];
+  await page(
+    'userpics/index.html',
+    'Userpics',
+    render(T.FACES, {
+      root: rootFor('userpics/index.html'),
+      mine: myPics,
+      others: theirPics.map((t) => ({ ...t, who: esc(t.who) })),
+    }),
+  );
+  pages++;
+  report({
+    kind: 'done',
+    task: 'faces',
+    summary: `${myPics.length} yours, ${theirPics.length} theirs`,
+  });
+
   // --- index + theme ----------------------------------------------------
   const imagesKept =
     (store.query("SELECT COUNT(*) AS n FROM assets WHERE status = 'ok'") as { n: number }[])[0]
@@ -533,7 +711,9 @@ export async function buildSite(
     render(T.INDEX, {
       journal: esc(journal),
       ...totals,
-      years: yearList.map((y) => ({ ...y, href: yearPath(y.year) })),
+      // A decade at a glance, by month. 2004 has 348 entries and 2010 has 5, and
+      // that curve is the story — a grid of year chips says nothing about shape.
+      heat: heatRows,
       recent: entries
         .slice(-30)
         .reverse()

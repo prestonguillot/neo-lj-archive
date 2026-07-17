@@ -30,7 +30,10 @@ export const LAYOUT = `<!doctype html>
     <nav>
       <a href="<%= root %>index.html">Journal</a>
       <a href="<%= root %>calendar/index.html">Calendar</a>
+      <a href="<%= root %>onthisday/<%= todayHref %>">On this day</a>
       <a href="<%= root %>tags/index.html">Tags</a>
+      <a href="<%= root %>people/index.html">People</a>
+      <a href="<%= root %>userpics/index.html">Userpics</a>
     </nav>
     <p class="rail-heading">Years</p>
     <ul class="years">
@@ -109,11 +112,17 @@ export const INDEX = `
 
 <section class="years">
   <h2>By year</h2>
-  <ul class="year-grid">
-    <% years.forEach(function (y) { %>
-      <li><a href="<%= y.href %>"><b><%= y.year %></b><span><%= y.count %></span></a></li>
+  <div class="heat">
+    <% heat.forEach(function (row) { %>
+    <div class="heat-row">
+      <a class="y" href="<%= row.href %>"><%= row.year %></a>
+      <span class="heat-cells">
+        <% row.cells.forEach(function (c) { %><i data-n="<%= c.level %>" title="<%= c.label %>"></i><% }) %>
+      </span>
+      <span class="t"><%= row.total %></span>
+    </div>
     <% }) %>
-  </ul>
+  </div>
 </section>
 `;
 
@@ -176,4 +185,85 @@ export const TAG = `
     <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %></a></li>
   <% }) %>
 </ul>
+`;
+
+/**
+ * On this day, across every year (§11 M4).
+ *
+ * The one navigation a diary actually wants: not "what did I write in March
+ * 2005" but "what was I doing on this date, ever". The calendar answers the
+ * first; nothing answered the second.
+ */
+export const ONTHISDAY = `
+<h1><%= displayDate %></h1>
+<p class="muted"><%= count %> entries on this date, across <%= yearCount %> years</p>
+
+<% years.forEach(function (y) { %>
+<section class="otd-year">
+  <h2><%= y.year %></h2>
+  <ul class="entry-list">
+    <% y.entries.forEach(function (e) { %>
+      <li><a href="<%= e.href %>"><span class="d"><%= e.time %></span> <%= e.subject %></a></li>
+    <% }) %>
+  </ul>
+</section>
+<% }) %>
+
+<nav class="spine">
+  <a class="prev" href="<%= prevHref %>">&larr; <%= prevLabel %></a>
+  <a class="next" href="<%= nextHref %>"><%= nextLabel %> &rarr;</a>
+</nav>
+`;
+
+/** Everyone who ever showed up, and how much (§11 M4). */
+export const PEOPLE = `
+<h1>People</h1>
+<p class="muted"><%= count %> people left <%= total %> comments<% if (anon) { %>, plus <%= anon %> anonymous<% } %></p>
+<ul class="people">
+  <% people.forEach(function (p) { %>
+    <li>
+      <% if (p.pic) { %><img class="userpic-sm" src="<%= root %><%= p.pic %>" alt="" loading="lazy"><% } else { %><span class="userpic-sm nopic"></span><% } %>
+      <a class="lj-user" href="<%= p.href %>"><%= p.name %></a>
+      <span class="n"><%= p.n %></span>
+    </li>
+  <% }) %>
+</ul>
+`;
+
+/**
+ * The faces (§11 M4).
+ *
+ * Every pic is here because it was SCRAPED off a rendered page — LJ's API never
+ * returns which pic an entry used, and the comment export carries no picid at
+ * all. The counts are the whole point: which face you actually wore, how often.
+ */
+export const FACES = `
+<h1>Userpics</h1>
+<p class="muted"><%= mine.length %> of yours<% if (others.length) { %>, and <%= others.length %> belonging to people who commented<% } %></p>
+
+<section class="faces">
+  <h2>Yours</h2>
+  <ul class="face-grid">
+    <% mine.forEach(function (f) { %>
+      <li>
+        <img src="<%= root %><%= f.pic %>" alt="" loading="lazy">
+        <span class="n"><%= f.n %> <%= f.n === 1 ? 'use' : 'uses' %></span>
+      </li>
+    <% }) %>
+  </ul>
+</section>
+
+<% if (others.length) { %>
+<section class="faces">
+  <h2>Theirs</h2>
+  <ul class="face-grid">
+    <% others.forEach(function (f) { %>
+      <li>
+        <img src="<%= root %><%= f.pic %>" alt="" loading="lazy">
+        <span class="n"><%= f.who %></span>
+      </li>
+    <% }) %>
+  </ul>
+</section>
+<% } %>
 `;

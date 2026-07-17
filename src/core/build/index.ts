@@ -266,6 +266,8 @@ export async function buildSite(
   const journal = `${config.username}'s journal`;
   const totals = { entryCount: entries.length, commentCount: comments.length };
 
+  const railYears = [...new Set(entries.map((e) => parts(e.eventtime).y))].sort();
+
   const page = (rel: string, title: string, content: string): Promise<void> =>
     write(
       rel,
@@ -274,6 +276,7 @@ export async function buildSite(
         journal: esc(journal),
         root: rootFor(rel),
         content,
+        railYears,
         ...totals,
       }),
     );

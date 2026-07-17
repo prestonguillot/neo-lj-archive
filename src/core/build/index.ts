@@ -684,7 +684,6 @@ export async function buildSite(
   // times, which makes him the top name on a list of everyone ELSE who showed up.
   const others = perPerson.filter((p) => p.id !== myId);
 
-  const personPath = (name: string): string => `people/${slugify(name)}.html`;
   // Same collision rule as tags: two usernames must never share a page.
   const personSlugs = assignSlugs(others.map((p) => p.name));
   const personPathVia = (name: string): string =>

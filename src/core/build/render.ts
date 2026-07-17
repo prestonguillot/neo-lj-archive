@@ -194,17 +194,37 @@ const escapeBogusEndTags = (html: string): string => html.replace(/<\/(?![a-zA-Z
  * Tags whose newlines are MARKUP, not writing. Suppression is inherited, so
  * anything inside a table is covered at any depth.
  *
- * DERIVED from the live journal, not guessed — my guess was wrong. Four entries
- * settle it:
+ * DERIVED from the live journal, not reasoned out — the reasoning was wrong. The
+ * first version of this list included ul/ol, on the sensible theory that
+ * indentation inside a list is markup rather than prose. The page disagrees:
  *
  *   353595   6 newlines inside a <ul>   -> LJ renders 6 <br>
- *   61314    3 newlines beside a table  -> LJ renders 3 <br>
- *   278183   16 newlines, 14 in a table -> LJ renders 2 <br>
- *   35094    620 newlines, ~617 in one  -> LJ renders 3 <br>
+ *   61314    3 newlines beside a table  -> LJ renders 3
+ *   278183   16 newlines, 14 in a table -> LJ renders 2
+ *   35094    620 newlines, ~617 in one  -> LJ renders 3
+ *   355841   35 newlines, bare prose    -> LJ renders 35
+ *   115772   opt_preformatted           -> LJ renders 0
  *
- * So LJ suppresses inside tables and <pre>, and NOT inside lists. The first
- * version of this list included ul/ol on the reasoning that indentation in a list
- * is markup — reasonable, and contradicted by the page.
+ * So: suppress inside tables and <pre>, not lists. Verified per container against
+ * the live pages — lj-cut (61 entries), i, center, lj-embed, lj, a, b,
+ * blockquote, div, colgroup all match.
+ *
+ * KNOWN LIMITATION — 4 entries of 1,547: 79958, 163243, 87570, 353017.
+ *
+ * Only 12 entries in this journal have a table AND newlines; 8 match LJ exactly
+ * and these 4 do not, by between 2 and 22 breaks. The cause is architectural
+ * rather than a rule to tweak. LJ's cleaner walks the RAW TOKEN STREAM and
+ * counts open tags as it goes, so "inside a table" means "a <table> was opened
+ * and not yet closed". parse5 hands us a REPAIRED TREE, where malformed 2004
+ * table soup — unclosed cells, foster-parented text — has already been
+ * restructured. On broken markup the two genuinely disagree about what is inside
+ * the table, and no configuration of this list reconciles them.
+ *
+ * Matching LJ exactly would mean reimplementing its linear scanner instead of
+ * using a real HTML parser: adopting LiveJournal's parsing bugs to recover some
+ * blank lines inside table cells in four posts. The content of all four is
+ * present and correct; only the spacing differs. That trade is not worth it, so
+ * this is written down rather than fixed.
  */
 const NO_BREAKS = new Set([
   'pre',

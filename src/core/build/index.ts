@@ -5,6 +5,7 @@
 import ejs from 'ejs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { renderBody, journalUrl } from './render.js';
 import { STYLE } from './theme.js';
 import * as T from './templates.js';
@@ -75,15 +76,53 @@ export interface BuildStats {
   readonly imagesLost: number;
 }
 
-/** A tag becomes a filename. Must be stable and collision-free on any OS. */
+/**
+ * A tag becomes a filename: lowercase, punctuation squashed to hyphens.
+ *
+ * NOT collision-free on its own, which is the whole point of assignSlugs below.
+ * "foo bar", "foo-bar" and "foo_bar" all land here as "foo-bar".
+ */
 export function slugify(tag: string): string {
   const base = tag
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  // A tag of only punctuation, or one that collides after squashing, still needs
-  // a page. Fall back to a hex encoding rather than silently dropping it.
+  // A tag of only punctuation still needs a page. Hex rather than dropping it.
   return base === '' ? 't-' + Buffer.from(tag).toString('hex').slice(0, 12) : base;
+}
+
+/**
+ * tag -> filename, distinct for distinct tags.
+ *
+ * slugify() squashes punctuation, so "foo bar" and "foo-bar" both become
+ * "foo-bar" — one page, and whichever is written second silently REPLACES the
+ * other's entries. This journal's 143 tags happen not to collide, so the bug is
+ * latent rather than live; it would surface on someone else's archive, or on
+ * this one after a single new tag.
+ *
+ * The comment here used to claim slugify handled collisions. It never did — it
+ * only handled the empty case. That is the kind of lie that survives review
+ * precisely because it sounds like diligence.
+ *
+ * Sorted first, so the assignment depends only on the SET of tags and not on the
+ * order rows came back — a slug that moves between builds breaks every bookmark.
+ */
+export function assignSlugs(tags: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const tag of [...new Set(tags)].sort()) {
+    const base = slugify(tag);
+    let slug = base;
+    if (taken.has(slug)) {
+      // Disambiguate with a hash of the ORIGINAL tag: stable across builds, and
+      // it can't collide with a counter someone else's tag might have claimed.
+      const h = createHash('sha256').update(tag).digest('hex').slice(0, 6);
+      slug = `${base}-${h}`;
+    }
+    taken.add(slug);
+    out.set(tag, slug);
+  }
+  return out;
 }
 
 const esc = (s: string): string =>
@@ -119,7 +158,9 @@ const dayPath = (y: number, m: number, d: number): string =>
   `calendar/${y}/${pad(m)}/${pad(d)}.html`;
 const yearPath = (y: number): string => `calendar/${y}/index.html`;
 const monthAnchor = (m: number): string => `m${pad(m)}`;
-const tagPath = (tag: string): string => `tags/${slugify(tag)}.html`;
+/** Built from the assigned slug map, NOT slugify: see assignSlugs. */
+const tagPathVia = (slugs: Map<string, string>, tag: string): string =>
+  `tags/${slugs.get(tag) ?? slugify(tag)}.html`;
 
 /** How many '../' to get from a page back to the site root. */
 const rootFor = (path: string): string => '../'.repeat(path.split('/').length - 1);
@@ -204,6 +245,9 @@ export async function buildSite(
       ) as { c: number; p: string }[]
     ).map((r) => [r.c, r.p]),
   );
+
+  // One assignment for the whole journal, so two tags can never share a page.
+  const tagSlugs = assignSlugs(tagRows.map((t) => t.tag));
 
   const heldDitemids = new Set(entries.map((e) => e.ditemid));
   const tagsByEntry = new Map<number, string[]>();
@@ -297,7 +341,7 @@ export async function buildSite(
     const moodText = e.mood ?? (e.moodid !== null ? moods.get(e.moodid) : undefined);
     const tags = (tagsByEntry.get(e.itemid) ?? []).map((t) => ({
       name: esc(t),
-      href: root + tagPath(t),
+      href: root + tagPathVia(tagSlugs, t),
     }));
     const prevE = entries[i - 1];
     const nextE = entries[i + 1];
@@ -433,14 +477,14 @@ export async function buildSite(
       tags: sortedTags.map(([name, count]) => ({
         name: esc(name),
         count,
-        href: rootFor('tags/index.html') + tagPath(name),
+        href: rootFor('tags/index.html') + tagPathVia(tagSlugs, name),
       })),
     }),
   );
   pages++;
 
   for (const [tag, count] of sortedTags) {
-    const rel = tagPath(tag);
+    const rel = tagPathVia(tagSlugs, tag);
     const root = rootFor(rel);
     const ids = new Set(tagRows.filter((t) => t.tag === tag).map((t) => t.itemid));
     await page(

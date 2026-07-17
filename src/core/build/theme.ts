@@ -74,8 +74,21 @@ header.site nav { margin-left: auto; display: flex; gap: 1rem; }
 main { max-width: var(--measure); margin: 0 auto; padding: 2rem 1.25rem 4rem; }
 @media (min-width: 60rem) { main { max-width: 42rem; } }
 
+/* --- userpics ----------------------------------------------------------- */
+/* LJ userpics are 100x100 at most, and many are smaller. Fixed box + contain so
+   a 48x48 icon isn't upscaled into mush next to a 100x100 one. */
+.userpic {
+  float: right; width: 100px; height: 100px; object-fit: contain;
+  margin: 0 0 .75rem 1rem; border-radius: var(--radius); background: var(--bg-sunk);
+}
+.userpic-sm {
+  width: 32px; height: 32px; object-fit: contain; border-radius: var(--radius);
+  background: var(--bg-sunk); flex: none;
+}
+.comment header { align-items: center; }
+
 /* --- entry ------------------------------------------------------------- */
-.entry header { margin-bottom: 1.5rem; }
+.entry header { margin-bottom: 1.5rem; overflow: hidden; }
 .entry h1 { margin: .2rem 0 .6rem; font-size: 1.7rem; }
 .entry .date { font-family: var(--font-ui); font-size: .8rem; letter-spacing: .04em; text-transform: uppercase; margin: 0; }
 .entry .date a { color: var(--fg-muted); text-decoration: none; }

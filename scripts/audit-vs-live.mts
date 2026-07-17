@@ -298,13 +298,27 @@ async function main(): Promise<void> {
   // --recheck re-runs only the entries that DIVERGED, to confirm a fix. The
   // default run skips everything already audited and spends the chunk on new
   // ground, which is the entire point of chunking.
+  const havePic = new Set(
+    (db.prepare('SELECT ditemid FROM entry_userpics').all() as { ditemid: number }[]).map((r) =>
+      String(r.ditemid),
+    ),
+  );
+
+  // An entry is only RETIRED when every job that visits it is done: its text
+  // checked, its line structure checked, and its userpic captured. Tracking just
+  // "audited" is how the entry-pic selector recorded nothing for 85 entries and
+  // they were never revisited, and how a brDiff-less verdict would masquerade as
+  // a verified one — the oracle grew an eye and every old verdict predates it.
+  const retired = (k: string): boolean =>
+    havePic.has(k) && state[k]?.brDiff !== undefined && state[k]?.gap !== -1;
+
   const seen = recheck
     ? new Set(
         Object.entries(state)
-          .filter(([, v]) => v.gap === 0)
+          .filter(([k, v]) => v.gap === 0 && (v.brDiff ?? 0) === 0 && retired(k))
           .map(([k]) => k),
       )
-    : new Set(Object.keys(state));
+    : new Set(Object.keys(state).filter(retired));
   const rows = sample(seen);
   if (rows.length === 0) {
     console.log(`nothing new to audit — ${Object.keys(state).length} entries already done.`);

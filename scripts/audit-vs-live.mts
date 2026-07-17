@@ -64,6 +64,18 @@ const STATE = './archive/audit/state.json';
 interface Verdict {
   shape: string;
   gap: number; // 0 = parity, >0 = chars LJ shows that we don't, -1 = body not found
+  /**
+   * Line breaks LJ renders minus line breaks we render.
+   *
+   * The whole reason this field exists: `gap` compares letters and digits only,
+   * deliberately, because whitespace and tokenisation produced constant false
+   * positives. Immune to whitespace turned out to mean BLIND to whitespace — it
+   * certified 1,541 entries "at parity" while 73% of the journal rendered as one
+   * wall of text, every paragraph break gone. An oracle that cannot see the
+   * defect will happily sign off on it forever. Content loss and formatting loss
+   * are different failures and need different instruments.
+   */
+  brDiff: number;
   note?: string;
 }
 type State = Record<string, Verdict>;
@@ -326,6 +338,7 @@ async function main(): Promise<void> {
   const report: Record<string, unknown>[] = [];
   let renderLoss = 0;
   let dbLoss = 0;
+  let structLoss = 0;
   let notLocated = 0;
   let picsFound = 0;
   let embedUrls = 0;
@@ -375,6 +388,20 @@ async function main(): Promise<void> {
     // read off the markup rather than inferred. Every heuristic that guessed at
     // this container grabbed the comments and chrome too, and reported loss on
     // entries that were fine.
+    // Structure, not just characters. Counted on the same cloned subtree the text
+    // comes from, so the tags footer is excluded from both.
+    const liveBreaks = await page
+      .locator('div.entry_text')
+      .first()
+      .evaluate((e) => {
+        const c = e.cloneNode(true) as HTMLElement;
+        for (const t of c.querySelectorAll('div.ljtags')) t.remove();
+        return c.querySelectorAll('br').length;
+      })
+      .catch(() => -1);
+    const ourBreaks = (renderedHtml.match(/<br>/g) ?? []).length;
+    const brDiff = liveBreaks < 0 ? 0 : liveBreaks - ourBreaks;
+
     const liveBody = await page
       .locator('div.entry_text')
       .first()
@@ -394,8 +421,9 @@ async function main(): Promise<void> {
     const gap = liveBody === null ? -1 : missingRun(stream(liveBody), stream(renderedHtml));
     if (liveBody === null) notLocated++;
     else if (gap > 0) dbLoss++;
+    if (brDiff !== 0) structLoss++;
     // Record every verdict, so the next chunk starts where this one stopped.
-    state[String(r.ditemid)] = { shape: r.shape, gap: liveBody === null ? -1 : gap };
+    state[String(r.ditemid)] = { shape: r.shape, gap: liveBody === null ? -1 : gap, brDiff };
     // Per entry, not per chunk. A run that is killed at 75/228 must keep its 75
     // verdicts — the userpic rows already survive that way, and having the two
     // halves of one traversal with different durability is a trap.
@@ -463,9 +491,21 @@ async function main(): Promise<void> {
           'INSERT INTO comment_userpics (comment_id, picid) VALUES (?, ?) ON CONFLICT (comment_id) DO UPDATE SET picid=excluded.picid',
         ).run(c.commentId, c.picid);
     }
-    const frames = await page.$$eval('iframe', (els) =>
-      els.map((e) => (e as HTMLIFrameElement).src).filter(Boolean),
-    );
+    // SCOPED to the entry body. Every LJ page carries a chrome iframe, which is
+    // why the old unscoped count read "embeds:1" on entries that have none —
+    // a number that looked like data and was furniture.
+    const frames = await page
+      .$$eval('div.entry_text iframe', (els) =>
+        els.map((e) => (e as HTMLIFrameElement).src).filter(Boolean),
+      )
+      .catch(() => [] as string[]);
+
+    // The URL behind <lj-embed id="42">, which the export never had.
+    frames.forEach((url, idx) => {
+      db.prepare(
+        'INSERT INTO entry_embeds (ditemid, idx, url) VALUES (?, ?, ?) ON CONFLICT (ditemid, idx) DO UPDATE SET url=excluded.url',
+      ).run(r.ditemid, idx, url);
+    });
 
     picsFound += new Set(pics).size;
     embedUrls += frames.length;
@@ -488,7 +528,9 @@ async function main(): Promise<void> {
           ? ' BODY-NOT-FOUND'
           : gap > 0
             ? ` DB-LOSS(${gap})`
-            : ' PARITY';
+            : brDiff !== 0
+              ? ` BREAKS(${brDiff > 0 ? '+' : ''}${brDiff})`
+              : ' PARITY';
     console.log(
       `${String(i + 1).padStart(3)}/${rows.length} ${r.ditemid} [${r.shape}] ` +
         `pics:${new Set(pics).size} embeds:${frames.length}${flag}`,
@@ -503,13 +545,15 @@ async function main(): Promise<void> {
   writeFileSync('./archive/audit/vs-live.json', JSON.stringify(report, null, 2));
 
   const all = Object.values(state);
-  const parity = all.filter((v) => v.gap === 0).length;
+  // Parity means BOTH: the same words AND the same shape.
+  const parity = all.filter((v) => v.gap === 0 && (v.brDiff ?? 0) === 0).length;
   console.log(`\n--- this chunk: ${rows.length} entries ---`);
   console.log(`renderer dropped content:  ${renderLoss}`);
   console.log(
     `AT FULL PARITY WITH LJ:    ${rows.length - notLocated - dbLoss}/${rows.length - notLocated} compared`,
   );
   console.log(`diverging from LJ:         ${dbLoss}`);
+  console.log(`line structure off:        ${structLoss}`);
   console.log(`body not found on page:    ${notLocated}`);
   console.log(`userpic urls harvested:    ${picsFound}`);
   console.log(`embed urls harvested:      ${embedUrls}`);
@@ -517,7 +561,7 @@ async function main(): Promise<void> {
   console.log(`  audited:        ${all.length} of 1547`);
   console.log(`  at parity:      ${parity}`);
   console.log(`  diverging:      ${all.length - parity}`);
-  const open = Object.entries(state).filter(([, v]) => v.gap > 0);
+  const open = Object.entries(state).filter(([, v]) => v.gap > 0 || (v.brDiff ?? 0) !== 0);
   if (open.length) {
     console.log('\n  still diverging (re-check with --recheck after a fix):');
     for (const [id, v] of open.sort((a, b) => b[1].gap - a[1].gap))

@@ -174,4 +174,18 @@ CREATE TABLE IF NOT EXISTS comment_userpics (
   comment_id  INTEGER PRIMARY KEY REFERENCES comments (id),
   picid       INTEGER NOT NULL REFERENCES userpics (picid)
 );
+
+-- What a <lj-embed> actually pointed at.
+--
+-- The export gives only <lj-embed id="42"> — 28 of them, every one carrying an id
+-- and nothing else. The real URL lived on LJ's servers, exactly like the polls.
+-- Unlike the polls, LJ still renders it, so it is recoverable from the page.
+-- Ordinal, because an entry can hold more than one and their order is the only
+-- thing tying them back to the tags in the body.
+CREATE TABLE IF NOT EXISTS entry_embeds (
+  ditemid  INTEGER NOT NULL,
+  idx      INTEGER NOT NULL,
+  url      TEXT NOT NULL,
+  PRIMARY KEY (ditemid, idx)
+);
 `;

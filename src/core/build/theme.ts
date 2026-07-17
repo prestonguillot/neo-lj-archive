@@ -427,7 +427,10 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
 }
 
 .hours { display: flex; align-items: flex-end; gap: 2px; height: 110px; margin: 0; }
-.hour { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.hour {
+  flex: 1; display: flex; flex-direction: column; justify-content: flex-end;
+  height: 100%; text-decoration: none;
+}
 .hour i {
   display: block; background: var(--rose); border-radius: 2px 2px 0 0; min-height: 2px;
 }
@@ -439,7 +442,12 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
 
 .bars { list-style: none; padding: 0; margin: 0; }
 .bars li { display: flex; align-items: center; gap: .6rem; padding: .18rem 0; }
-.bars .k { font-family: var(--meta); font-size: 11px; min-width: 8rem; color: var(--ink); }
+.bars .k {
+  font-family: var(--meta); font-size: 11px; min-width: 8rem;
+  color: var(--ink); text-decoration: none;
+}
+a.k:hover { color: var(--rose); }
+a.k:hover + .bar i { background: var(--ink); }
 .bars .bar { flex: 1; height: 12px; background: var(--sunk); border-radius: 2px; }
 .bars .bar i { display: block; height: 100%; background: var(--rose); border-radius: 2px; }
 .bars .v { font-family: var(--meta); font-size: 10px; color: var(--ink-2); min-width: 2.5rem; text-align: right; }
@@ -447,6 +455,19 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
 .facts { list-style: none; padding: 0; margin: 0; }
 .facts li { padding: .4rem 0; border-bottom: 1px solid var(--rule); font-size: .95rem; }
 .facts b { font-family: var(--display); font-size: 1.15rem; color: var(--rose); }
+.facts a { text-decoration: none; }
+.facts a:hover b { color: var(--ink); }
+.facts a:hover { text-decoration: underline; text-decoration-color: var(--rule); }
+
+/* The gallery is the images themselves, so the frames get out of the way. */
+.img-grid { gap: 4px; }
+.img-grid li { width: 96px; }
+.img-grid a { display: block; line-height: 0; }
+.img-grid img {
+  width: 96px; height: 96px; object-fit: cover;
+  border: 1px solid var(--rule); border-radius: var(--radius); background: var(--card);
+}
+.img-grid a:hover img { outline: 2px solid var(--rose); outline-offset: 1px; border-color: var(--rose); }
 .years, .tag-cloud, .year-grid, .months { max-width: 62ch; }
 .years h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; }
 

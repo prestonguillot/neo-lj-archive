@@ -356,31 +356,71 @@ export const RETROSPECT = `
 
 <section class="viz">
   <h2>The hours</h2>
-  <p class="viz-note">When you wrote. Local time, as LiveJournal recorded it.</p>
+  <p class="viz-note">When you wrote, in the time LiveJournal recorded. Click an hour to read it.</p>
   <div class="hours">
     <% hours.forEach(function (h) { %>
-      <span class="hour" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i><b><%= h.tick %></b></span>
+      <% if (h.href) { %><a class="hour" href="<%= h.href %>" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i><b><%= h.tick %></b></a>
+      <% } else { %><span class="hour" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i><b><%= h.tick %></b></span><% } %>
     <% }) %>
   </div>
 </section>
 
 <section class="viz">
   <h2>How you felt</h2>
-  <p class="viz-note"><%= moodTotal %> of <%= entryCount %> entries recorded a mood &mdash; most through LiveJournal's own vocabulary, which is why they resolve to words at all. <%= moodNote %></p>
+  <p class="viz-note"><%= moodTotal %> of <%= entryCount %> entries recorded a mood.</p>
   <ul class="bars">
     <% moods.forEach(function (m) { %>
-      <li><span class="k"><%= m.name %></span><span class="bar"><i style="width: <%= m.pct %>%"></i></span><span class="v"><%= m.n %></span></li>
+      <li><a class="k" href="<%= m.href %>"><%= m.name %></a><span class="bar"><i style="width: <%= m.pct %>%"></i></span><span class="v"><%= m.n %></span></li>
     <% }) %>
   </ul>
 </section>
 
 <section class="viz">
-  <h2>What was kept</h2>
+  <h2>Records</h2>
   <ul class="facts">
-    <li><b><%= privatePct %>%</b> of these entries were private. <%= privateNote %></li>
-    <li><b><%= imagesKept %></b> images from your entries and comments are stored here; <b><%= imagesLost %></b> are gone from the internet and say so where they stood.</li>
-    <li><b><%= userpicCount %></b> userpics recovered across <%= facesPeople %> people &mdash; none of which LiveJournal's API would admit to.</li>
-    <li><b><%= people %></b> people left comments. The deepest thread runs <b><%= deepest %></b> replies.</li>
+    <li><a href="<%= longest.href %>"><b><%= longest.words %></b> words</a> &mdash; the longest entry, <%= longest.date %>.</li>
+    <li><a href="<%= mostComments.href %>"><b><%= mostComments.n %></b> comments</a> &mdash; the most on one entry, <%= mostComments.date %>.</li>
+    <li><a href="<%= deepest.href %>"><b><%= deepest.n %></b> replies deep</a> &mdash; the longest thread anyone managed.</li>
+    <li><a href="<%= busiest.href %>"><b><%= busiest.n %></b> entries in a day</a> &mdash; <%= busiest.date %>, your busiest.</li>
+    <li><a href="<%= quietest.href %>"><b><%= quietest.days %></b> days</a> &mdash; the longest you went without writing, ending <%= quietest.date %>.</li>
   </ul>
 </section>
+
+<section class="viz">
+  <h2>What is here</h2>
+  <ul class="facts">
+    <li><b><%= privatePct %>%</b> of the entries are private, <b><%= friendsPct %>%</b> friends-only.</li>
+    <li><a href="<%= imagesHref %>"><b><%= imagesKept %></b> images</a> from entries and comments. <b><%= imagesLost %></b> are gone.</li>
+    <li><a href="<%= userpicsHref %>"><b><%= userpicCount %></b> userpics</a> across <%= facesPeople %> people.</li>
+    <li><a href="<%= peopleHref %>"><b><%= people %></b> people</a> left comments<% if (anon) { %>, plus <%= anon %> anonymous<% } %>.</li>
+    <li><a href="<%= tagsHref %>"><b><%= tagTotal %></b> tags</a> on <%= taggedEntries %> entries &mdash; you used nearly every one exactly once.</li>
+  </ul>
+</section>
+`;
+
+/** Every image that survived, and the post it came from (§11 M4). */
+export const IMAGES = `
+<h1>Images</h1>
+<p class="muted"><%= count %> images recovered from your entries and comments. <%= lost %> could not be found.</p>
+<ul class="face-grid img-grid">
+  <% images.forEach(function (im) { %>
+    <li>
+      <a href="<%= im.href %>" data-tip="<%= im.tip %>">
+        <img src="<%= root %><%= im.pic %>" alt="" loading="lazy">
+      </a>
+    </li>
+  <% }) %>
+</ul>
+`;
+
+/** Entries sharing one hour of the day, or one mood (§11 M4). */
+export const SLICE = `
+<h1><%= title %></h1>
+<p class="muted"><%= count %> entries</p>
+<ul class="entry-list">
+  <% entries.forEach(function (e) { %>
+    <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %></a></li>
+  <% }) %>
+</ul>
+<p><a href="<%= backHref %>">&larr; Retrospect</a></p>
 `;

@@ -134,6 +134,26 @@ function sample(seen: Set<string>): Row[] {
       out.push({ ...r, shape });
     }
   }
+
+  // Top up from whatever is left over.
+  //
+  // The per-shape cap is what makes the FIRST chunks find bugs: it forces the
+  // weird markup in front of the check instead of letting a uniform sample miss
+  // every poll and unclosed embed. But once a shape is exhausted its bucket just
+  // goes empty, and the cap silently throttles the run to a fraction of the
+  // target — 664 of 1547 audited, 883 left, and a chunk asked for 1600 doing 228.
+  // The shape quota is a floor on variety, not a ceiling on work.
+  if (out.length < SAMPLE) {
+    const rest = db
+      .prepare('SELECT ditemid, itemid, body FROM entries ORDER BY eventtime DESC')
+      .all() as Omit<Row, 'shape'>[];
+    for (const r of rest) {
+      if (out.length >= SAMPLE) break;
+      if (picked.has(r.ditemid) || seen.has(String(r.ditemid))) continue;
+      picked.add(r.ditemid);
+      out.push({ ...r, shape: 'fill' });
+    }
+  }
   return out;
 }
 

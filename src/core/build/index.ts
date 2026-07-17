@@ -54,6 +54,7 @@ interface EntryRow {
   moodid: number | null;
   music: string | null;
   location: string | null;
+  props_json: string | null;
 }
 
 interface CommentRow {
@@ -182,7 +183,7 @@ export async function buildSite(
   report({ kind: 'start', task: 'loading' });
 
   const entries = store.query(
-    'SELECT itemid, ditemid, eventtime, subject, body, security, mood, moodid, music, location FROM entries ORDER BY eventtime',
+    'SELECT itemid, ditemid, eventtime, subject, body, security, mood, moodid, music, location, props_json FROM entries ORDER BY eventtime',
   ) as EntryRow[];
   const comments = store.query(
     `SELECT c.id, c.jitemid, c.parentid, c.posterid, u.username, c.subject, c.body, c.date, c.state
@@ -293,6 +294,8 @@ export async function buildSite(
     const p = parts(e.eventtime);
 
     const ctx = {
+      // opt_preformatted: LJ leaves this body's newlines alone, so we must too.
+      preformatted: /"opt_preformatted"/.test(e.props_json ?? ''),
       localFor: (u: string) => live.get(u),
       deadReason: (u: string) => dead.get(u),
       username: config.username,

@@ -22,11 +22,18 @@ export interface RenderContext {
   readonly entryHref: (ditemid: number) => string | undefined;
   /** Prefix from this page back to the archive root, e.g. '../'. */
   readonly root: string;
+  /**
+   * LJ's opt_preformatted prop: the body is already real HTML, leave its
+   * newlines alone. Only 4 of 1,547 entries set it — the other 1,543 rely on LJ
+   * turning newlines into breaks at render time.
+   */
+  readonly preformatted?: boolean;
 }
 
 interface Node {
   nodeName: string;
   tagName?: string;
+  namespaceURI?: string;
   value?: string;
   attrs?: { name: string; value: string }[];
   childNodes?: Node[];
@@ -43,6 +50,14 @@ const setAttr = (n: Node, name: string, value: string): void => {
   else (n.attrs ??= []).push({ name, value });
 };
 
+/**
+ * namespaceURI is not decoration: parse5's serializer only recognises a void
+ * element when the node is in the HTML namespace. Without it, <br> serialises as
+ * `<br></br>` — and HTML5 parses a `</br>` end tag as ANOTHER break, so every
+ * line in the archive would come out double-spaced.
+ */
+const HTML_NS = 'http://www.w3.org/1999/xhtml';
+
 const el = (
   tagName: string,
   attrs: { name: string; value: string }[],
@@ -50,6 +65,7 @@ const el = (
 ): Node => ({
   nodeName: tagName,
   tagName,
+  namespaceURI: HTML_NS,
   attrs,
   childNodes: children,
 });
@@ -174,8 +190,81 @@ function selfDitemid(href: string, username: string): number | undefined {
  */
 const escapeBogusEndTags = (html: string): string => html.replace(/<\/(?![a-zA-Z])/g, '&lt;/');
 
+/**
+ * Tags whose newlines are MARKUP, not writing. Suppression is inherited, so
+ * anything inside a table is covered at any depth.
+ *
+ * DERIVED from the live journal, not guessed — my guess was wrong. Four entries
+ * settle it:
+ *
+ *   353595   6 newlines inside a <ul>   -> LJ renders 6 <br>
+ *   61314    3 newlines beside a table  -> LJ renders 3 <br>
+ *   278183   16 newlines, 14 in a table -> LJ renders 2 <br>
+ *   35094    620 newlines, ~617 in one  -> LJ renders 3 <br>
+ *
+ * So LJ suppresses inside tables and <pre>, and NOT inside lists. The first
+ * version of this list included ul/ol on the reasoning that indentation in a list
+ * is markup — reasonable, and contradicted by the page.
+ */
+const NO_BREAKS = new Set([
+  'pre',
+  'textarea',
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'td',
+  'th',
+  'select',
+  'option',
+  'script',
+  'style',
+]);
+
+/**
+ * A newline is a line break (LJ's addbreaks).
+ *
+ * LiveJournal converted \n to <br /> when it rendered an entry, unless
+ * opt_preformatted was set. We stored the raw body — newlines and all — and then
+ * parsed it as HTML, where whitespace collapses. So every paragraph break in
+ * 1,132 of 1,547 entries silently vanished: 73% of the journal rendered as one
+ * wall of text.
+ *
+ * Verified against the live page rather than assumed: entry 355841 has 35
+ * newlines and no <br> in the source, and LJ renders it with exactly 35 <br>.
+ *
+ * Done on the parsed tree, not with a regex over the source, because a regex
+ * cannot tell a newline inside an attribute or between two <tr>s from a newline
+ * the author typed.
+ */
+function addBreaks(node: Node, inNoBreak: boolean): void {
+  const parentTag = node.tagName?.toLowerCase();
+  const suppressed = inNoBreak || (parentTag !== undefined && NO_BREAKS.has(parentTag));
+  for (const c of [...(node.childNodes ?? [])]) {
+    if (c.nodeName === '#text') {
+      if (suppressed || c.value === undefined || !c.value.includes('\n')) continue;
+      const parts = c.value.split('\n');
+      const out: Node[] = [];
+      parts.forEach((part, i) => {
+        if (i > 0) out.push(el('br', []));
+        if (part !== '') out.push(text(part));
+      });
+      replaceWith(c, out);
+    } else {
+      addBreaks(c, suppressed);
+      if (c.content) addBreaks(c.content, suppressed);
+    }
+  }
+}
+
 export function renderBody(html: string, ctx: RenderContext): string {
   const frag = parseFragment(escapeBogusEndTags(html)) as unknown as Node;
+
+  // Before the transform: the LJ tags below rebuild subtrees, and a newline that
+  // has already become a <br> element survives that intact, where a raw \n in a
+  // text node would be at the mercy of every later reparent.
+  if (ctx.preformatted !== true) addBreaks(frag, false);
 
   const visit = (node: Node): void => {
     // Snapshot: the transform replaces nodes as it goes.

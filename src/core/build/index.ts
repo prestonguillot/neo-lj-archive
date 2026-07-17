@@ -530,13 +530,9 @@ export async function buildSite(
     render(T.INDEX, {
       journal: esc(journal),
       ...totals,
-      firstYear: years[0] ?? '',
-      lastYear: years.at(-1) ?? '',
-      imagesKept,
-      imagesLost,
       years: yearList.map((y) => ({ ...y, href: yearPath(y.year) })),
       recent: entries
-        .slice(-15)
+        .slice(-30)
         .reverse()
         .map((e) => {
           const p = parts(e.eventtime);

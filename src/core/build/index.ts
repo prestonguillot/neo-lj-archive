@@ -182,6 +182,29 @@ export async function buildSite(
     ).map((r) => [r.u, r.why]),
   );
 
+  // Userpics (§3). Scraped, not from the API — LJ never returns picture_keyword
+  // and the comment export has no picid. Only blobs we actually hold are joined,
+  // so a pic we know about but failed to fetch renders as nothing rather than a
+  // broken image.
+  const entryPic = new Map(
+    (
+      store.query(
+        `SELECT e.ditemid AS d, a.local_path AS p FROM entry_userpics e
+           JOIN userpics u ON u.picid = e.picid
+           JOIN assets a ON a.hash = u.hash WHERE a.status = 'ok'`,
+      ) as { d: number; p: string }[]
+    ).map((r) => [r.d, r.p]),
+  );
+  const commentPic = new Map(
+    (
+      store.query(
+        `SELECT c.comment_id AS c, a.local_path AS p FROM comment_userpics c
+           JOIN userpics u ON u.picid = c.picid
+           JOIN assets a ON a.hash = u.hash WHERE a.status = 'ok'`,
+      ) as { c: number; p: string }[]
+    ).map((r) => [r.c, r.p]),
+  );
+
   const heldDitemids = new Set(entries.map((e) => e.ditemid));
   const tagsByEntry = new Map<number, string[]>();
   for (const t of tagRows) tagsByEntry.set(t.itemid, [...(tagsByEntry.get(t.itemid) ?? []), t.tag]);
@@ -240,8 +263,10 @@ export async function buildSite(
       (kids.get(parent) ?? [])
         .map((c) =>
           render(T.COMMENT, {
+            root,
             id: c.id,
             state: c.state,
+            pic: commentPic.get(c.id),
             // Anonymous is the ABSENCE of a poster, not a kind of user (§6).
             // journalUrl, not a hand-built host: LJ maps underscores to hyphens
             // in journal hostnames, and this line had its own copy of that URL
@@ -281,6 +306,8 @@ export async function buildSite(
       parts(x.eventtime).y + '-' + pad(parts(x.eventtime).m) + '-' + pad(parts(x.eventtime).d);
 
     const content = render(T.ENTRY, {
+      root,
+      pic: entryPic.get(e.ditemid),
       subject: esc(e.subject ?? '(no subject)'),
       displayDate: `${MONTHS[p.m - 1]} ${p.d}, ${p.y} — ${p.hh}:${p.mm}`,
       dayHref: root + dayPath(p.y, p.m, p.d),

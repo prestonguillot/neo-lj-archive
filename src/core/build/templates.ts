@@ -44,6 +44,7 @@ export const LAYOUT = `<!doctype html>
 export const ENTRY = `
 <article class="entry">
   <header>
+    <% if (pic) { %><img class="userpic" src="<%= root %><%= pic %>" alt="" loading="lazy"><% } %>
     <p class="date"><a href="<%= dayHref %>"><%= displayDate %></a></p>
     <h1><%= subject %></h1>
     <div class="meta">
@@ -77,6 +78,7 @@ export const ENTRY = `
 export const COMMENT = `
 <article class="comment comment-<%= state %>" id="c<%= id %>">
   <header>
+    <% if (pic) { %><img class="userpic-sm" src="<%= root %><%= pic %>" alt="" loading="lazy"><% } %>
     <span class="who"><%- who %></span>
     <% if (date) { %><time><%= date %></time><% } %>
     <% if (stateLabel) { %><span class="state"><%= stateLabel %></span><% } %>

@@ -26,7 +26,16 @@ export interface UserpicStats {
 
 export async function downloadUserpics(
   outputDir: string,
-  deps: { store: Store; report?: ProgressReporter; timeoutMs?: number },
+  deps: {
+    store: Store;
+    report?: ProgressReporter;
+    timeoutMs?: number;
+    // Injected, like every other stage: core must be testable without a network
+    // (§15). Their absence here was a design bug — it made this stage impossible
+    // to test at all, which is exactly why it shipped untested.
+    fetchImpl?: typeof fetch;
+    sleepImpl?: (ms: number) => Promise<void>;
+  },
 ): Promise<UserpicStats> {
   const { store } = deps;
   const report = deps.report ?? silentReporter;
@@ -55,6 +64,8 @@ export async function downloadUserpics(
       concurrency: 1,
       perHostDelayMs: 300,
       timeoutMs: deps.timeoutMs ?? 15_000,
+      ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+      ...(deps.sleepImpl !== undefined ? { sleepImpl: deps.sleepImpl } : {}),
     },
     (a) => {
       done++;

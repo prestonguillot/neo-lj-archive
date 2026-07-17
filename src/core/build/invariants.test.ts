@@ -144,3 +144,70 @@ describe('invariant: emoticons that look like markup survive', () => {
     },
   );
 });
+
+/**
+ * A newline is a line break (LJ's addbreaks).
+ *
+ * LiveJournal turned \n into <br /> when it rendered an entry, unless
+ * opt_preformatted was set. We stored the raw body and parsed it as HTML, where
+ * whitespace collapses — so every paragraph break in 1,132 of 1,547 entries
+ * silently vanished. 73% of the journal rendered as one wall of text.
+ *
+ * Nothing caught it. Not 313 tests, and not the live parity check, which had
+ * declared 1,541 entries "at parity" while it was happening: that check compares
+ * letters and digits only, deliberately, because whitespace kept producing false
+ * positives. Immune to whitespace means blind to whitespace. These assertions
+ * exist because the oracle that should have seen this cannot.
+ */
+describe('invariant: a newline is a line break', () => {
+  // catches: the wall of text. HTML collapses whitespace, so a body whose only
+  // structure is newlines renders as one paragraph unless something intervenes.
+  it('turns a bare newline into a break', () => {
+    const html = renderBody('line one\nline two', ctx());
+    expect(html).toContain('<br>');
+    expect(html).toMatch(/line one\s*<br>\s*line two/);
+  });
+
+  it('turns a blank line into two breaks, not one', () => {
+    expect((renderBody('a\n\nb', ctx()).match(/<br>/g) ?? []).length).toBe(2);
+  });
+
+  // catches: double-breaking a body that is already real HTML. Only 4 entries in
+  // the corpus set opt_preformatted, which is exactly why it would go unnoticed.
+  it('leaves a preformatted body alone', () => {
+    expect(renderBody('a\nb', ctx({ preformatted: true }))).not.toContain('<br>');
+  });
+
+  // catches: injecting breaks into table markup. A newline between <tr> and <td>
+  // is indentation, not writing, and breaking it puts blank rows in the layout.
+  // Derived from the live journal: entry 35094 has 620 newlines, ~617 inside a
+  // table, and LJ renders 3 breaks.
+  it('does not break newlines inside table markup', () => {
+    const html = renderBody('<table>\n<tr>\n<td>\ncell\n</td>\n</tr>\n</table>', ctx());
+    expect(html).not.toContain('<br>');
+  });
+
+  it('does not break inside pre, where whitespace already means what it says', () => {
+    expect(renderBody('<pre>a\nb</pre>', ctx())).not.toContain('<br>');
+  });
+
+  // catches: over-suppressing. My first suppression list included ul/ol on the
+  // reasoning that indentation in a list is markup. The live page says otherwise:
+  // entry 353595 has 6 newlines in a <ul> and LJ renders 6 breaks. A rule reasoned
+  // out from first principles lost to one look at the thing.
+  it('DOES break inside a list, because LiveJournal does', () => {
+    const html = renderBody('<ul><li>one\ntwo</li></ul>', ctx());
+    expect(html).toContain('<br>');
+  });
+
+  // The corpus: no entry may lose the structure its author typed.
+  it.each(
+    bodies
+      .filter((b) => /\n/.test(b.html) && !/<br|<p[\s>]/i.test(b.html))
+      .map((b) => [`${b.kind} ${b.id}`, b] as const),
+  )('keeps the line structure of %s', (_label, b) => {
+    const out = renderBody(b.html, ctx());
+    // Every newline outside table markup survives as a break.
+    expect(out).toContain('<br>');
+  });
+});

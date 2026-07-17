@@ -68,7 +68,10 @@ export async function downloadEmbedThumbs(
   // maps to many (ditemid, idx). downloadAll dedups the fetch; we link them all.
   const targetsFor = new Map<string, { ditemid: number; idx: number }[]>();
   for (const p of pending) {
-    targetsFor.set(p.thumb, [...(targetsFor.get(p.thumb) ?? []), { ditemid: p.ditemid, idx: p.idx }]);
+    targetsFor.set(p.thumb, [
+      ...(targetsFor.get(p.thumb) ?? []),
+      { ditemid: p.ditemid, idx: p.idx },
+    ]);
   }
   let done = 0;
 
@@ -102,6 +105,8 @@ function statsFor(store: Store): EmbedThumbStats {
   return {
     known: n('SELECT COUNT(*) AS n FROM entry_embeds'),
     stored: n('SELECT COUNT(*) AS n FROM entry_embeds WHERE thumb_hash IS NOT NULL'),
-    failed: n('SELECT COUNT(*) AS n FROM entry_embeds WHERE thumb_hash IS NULL AND fetched_at IS NOT NULL'),
+    failed: n(
+      'SELECT COUNT(*) AS n FROM entry_embeds WHERE thumb_hash IS NULL AND fetched_at IS NOT NULL',
+    ),
   };
 }

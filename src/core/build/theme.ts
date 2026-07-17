@@ -314,11 +314,11 @@ details.lj-cut summary {
 h1 { font-family: var(--display); font-size: 2rem; letter-spacing: -.02em; margin: 0 0 .5rem; }
 h2 { font-family: var(--display); font-size: 1.15rem; letter-spacing: -.01em; }
 
-.entry-list { list-style: none; padding: 0; }
+.entry-list { list-style: none; padding: 0; margin: 0; max-width: 62ch; }
 .entry-list li { border-bottom: 1px solid var(--rule); }
 .entry-list a { display: flex; gap: .9rem; padding: .5rem 0; text-decoration: none; color: var(--ink); }
 .entry-list a:hover { color: var(--rose); }
-.entry-list .d { font-family: var(--meta); font-size: 11px; color: var(--ink-2); min-width: 6rem; }
+.entry-list .d { font-family: var(--meta); font-size: 11px; color: var(--ink-2); min-width: 5.5rem; flex: none; }
 .entry-list .c { font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
 
 .year-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: .4rem; }
@@ -353,12 +353,8 @@ table.cal td span { display: block; padding: .25rem 0; color: var(--ink-2); opac
 .tag-cloud a:hover { background: var(--amber); border-color: var(--amber); color: #14161c; }
 .tag-cloud span { font-size: 10px; color: var(--ink-2); }
 
-.intro h1 { font-size: 2.6rem; line-height: 1.05; }
-.intro .lede { font-size: 1.05rem; max-width: 46ch; }
+.recent { margin-bottom: 3rem; }
+.years, .tag-cloud, .year-grid, .months { max-width: 62ch; }
+.years h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; }
 
-footer.site {
-  font-family: var(--meta); font-size: 10.5px; color: var(--ink-2);
-  border-top: 1px solid var(--rule); margin-top: 3rem; padding-top: 1rem;
-}
-footer.site p { margin: .2rem 0; }
 `;

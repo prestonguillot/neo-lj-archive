@@ -39,10 +39,6 @@ export const LAYOUT = `<!doctype html>
   </aside>
   <main>
 <%- content %>
-    <footer class="site">
-      <p>Archived from LiveJournal.</p>
-      <p>Static HTML. No server, no runtime. It will still open when nothing else does.</p>
-    </footer>
   </main>
 </div>
 </body>
@@ -101,12 +97,14 @@ export const COMMENT = `
 `;
 
 export const INDEX = `
-<section class="intro">
-  <h1><%= journal %></h1>
-  <p class="lede"><%= entryCount %> entries and <%= commentCount %> comments,
-     <%= firstYear %>&ndash;<%= lastYear %>.</p>
-  <p><%= imagesKept %> images recovered and stored locally.
-     <% if (imagesLost) { %><%= imagesLost %> could not be found; each says so where it stood.<% } %></p>
+<h1><%= journal %></h1>
+
+<section class="recent">
+  <ul class="entry-list">
+    <% recent.forEach(function (e) { %>
+      <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %></a></li>
+    <% }) %>
+  </ul>
 </section>
 
 <section class="years">
@@ -114,15 +112,6 @@ export const INDEX = `
   <ul class="year-grid">
     <% years.forEach(function (y) { %>
       <li><a href="<%= y.href %>"><b><%= y.year %></b><span><%= y.count %></span></a></li>
-    <% }) %>
-  </ul>
-</section>
-
-<section class="recent">
-  <h2>Most recent</h2>
-  <ul class="entry-list">
-    <% recent.forEach(function (e) { %>
-      <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %></a></li>
     <% }) %>
   </ul>
 </section>

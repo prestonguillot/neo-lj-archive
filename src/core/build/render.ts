@@ -29,16 +29,16 @@ export interface RenderContext {
    */
   readonly preformatted?: boolean;
   /**
-   * The recovered URL for the Nth <lj-embed> in this body, in document order, or
-   * undefined if it couldn't be recovered.
+   * The Nth <lj-embed> in this body, in document order: where the video lives and
+   * (if downloaded) its local poster frame. undefined if unrecoverable.
    *
    * The export gives only <lj-embed id="X">, where the id is LJ's internal embed
-   * key, NOT the video. The real URL was scraped from the rendered page and lives
-   * in entry_embeds keyed by order of appearance — the same ordinal the renderer
-   * hits these tags in. 21 of 28 resolve to a YouTube link; the rest carried only
-   * dead session tokens.
+   * key, not the video. The real URL was scraped from the rendered page. A YouTube
+   * player cannot load from file:// — proven: a video that plays over http fails
+   * with error 153 over file:// — so the archive links OUT to the video rather
+   * than trying to play it inline, over a poster frame stored locally.
    */
-  readonly embedUrl?: (index: number) => string | undefined;
+  readonly embedUrl?: (index: number) => { watch: string; poster?: string } | undefined;
 }
 
 interface Node {
@@ -399,16 +399,30 @@ export function renderBody(html: string, ctx: RenderContext): string {
       const marker =
         recovered !== undefined
           ? el(
-              'span',
-              [{ name: 'class', value: 'lj-video' }],
+              'a',
               [
+                { name: 'href', value: recovered.watch },
+                { name: 'class', value: 'lj-video' },
+                { name: 'target', value: '_blank' },
+                { name: 'rel', value: 'noopener' },
+                { name: 'title', value: 'Opens on YouTube — a local file cannot play it inline' },
+              ],
+              [
+                // A real poster frame when we have one; a plain dark card when the
+                // video is gone. Either way a play badge, and it opens the video.
+                ...(recovered.poster !== undefined
+                  ? [
+                      el('img', [
+                        { name: 'src', value: ctx.root + recovered.poster },
+                        { name: 'alt', value: '' },
+                        { name: 'loading', value: 'lazy' },
+                      ]),
+                    ]
+                  : []),
                 el(
-                  'a',
-                  [
-                    { name: 'href', value: recovered },
-                    { name: 'class', value: 'embed-play' },
-                  ],
-                  [text('\u25B6 Watch this video')],
+                  'span',
+                  [{ name: 'class', value: 'play-badge' }],
+                  [text('\u25B6 Watch on YouTube')],
                 ),
               ],
             )

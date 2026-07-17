@@ -29,19 +29,6 @@ export const LAYOUT = `<!doctype html>
    REQUIRES script (DESIGN.md §13) — this only sharpens a link that already works.
    Dates that were never written on have no page, so it walks forward to the next
    one that exists rather than sending you to a 404. */
-document.addEventListener('click', function (ev) {
-  var a = ev.target.closest ? ev.target.closest('a.embed-play') : null;
-  if (!a) return;
-  var m = /[?&]v=([^&]+)/.exec(a.href);
-  if (!m) return; // not a shape we can embed — let the link do its normal thing
-  ev.preventDefault();
-  var f = document.createElement('iframe');
-  f.src = 'https://www.youtube-nocookie.com/embed/' + m[1] + '?autoplay=1';
-  f.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';
-  f.allowFullscreen = true;
-  f.className = 'lj-video-frame';
-  a.replaceWith(f);
-});
 window.addEventListener('DOMContentLoaded', function () {
   var a = document.getElementById('otd');
   if (!a) return;

@@ -5,6 +5,29 @@ import { dirname, join } from 'node:path';
 import type { CommentBody, CommentMeta, Entry, Mood, UserMap } from '../fetch/types.js';
 
 /**
+ * Columns added to a table AFTER archives already existed in the wild.
+ *
+ * CREATE TABLE IF NOT EXISTS leaves an existing table's shape untouched, so a new
+ * column never reaches an old archive.db and the first query dies with "no such
+ * column". SQLite has no ADD COLUMN IF NOT EXISTS, so each is guarded by reading
+ * pragma table_info first. Idempotent: a fresh db already has them and this does
+ * nothing.
+ */
+const MIGRATIONS: { table: string; column: string; def: string }[] = [
+  { table: 'entry_embeds', column: 'thumb_hash', def: 'TEXT' },
+  { table: 'entry_embeds', column: 'fetched_at', def: 'TEXT' },
+];
+
+function migrate(db: DatabaseSync): void {
+  for (const m of MIGRATIONS) {
+    const cols = db.prepare(`PRAGMA table_info(${m.table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === m.column)) {
+      db.exec(`ALTER TABLE ${m.table} ADD COLUMN ${m.column} ${m.def}`);
+    }
+  }
+}
+
+/**
  * The canonical store. SQLite via node:sqlite — no native module, so an Electron
  * build (M5) needs no electron-rebuild (DESIGN.md §15).
  *
@@ -100,6 +123,7 @@ export class Store {
     mkdirSync(dirname(path), { recursive: true });
     const db = new DatabaseSync(path);
     db.exec(SCHEMA);
+    migrate(db);
     return new Store(db);
   }
 
@@ -107,6 +131,7 @@ export class Store {
   static openMemory(): Store {
     const db = new DatabaseSync(':memory:');
     db.exec(SCHEMA);
+    migrate(db);
     return new Store(db);
   }
 
@@ -406,6 +431,20 @@ export class Store {
     this.#db
       .prepare('UPDATE userpics SET hash = ?, fetched_at = ? WHERE picid = ?')
       .run(hash ?? null, now, picid);
+  }
+
+  /** Link a video embed to its downloaded poster. Same tried-not-retried rule. */
+  linkEmbedThumb(
+    ditemid: number,
+    idx: number,
+    hash: string | undefined,
+    now = new Date().toISOString(),
+  ): void {
+    this.#db
+      .prepare(
+        'UPDATE entry_embeds SET thumb_hash = ?, fetched_at = ? WHERE ditemid = ? AND idx = ?',
+      )
+      .run(hash ?? null, now, ditemid, idx);
   }
 
   /** Escape hatch for tests and the build stage. */

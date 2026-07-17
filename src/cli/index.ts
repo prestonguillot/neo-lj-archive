@@ -4,6 +4,7 @@ import { DEFAULTS, Secret, type Config } from '../core/index.js';
 import { LjClient, BannedError } from '../core/fetch/client.js';
 import { localizeImages } from '../core/images/index.js';
 import { downloadUserpics } from '../core/images/userpics.js';
+import { downloadEmbedThumbs } from '../core/images/embeds.js';
 import { buildSite } from '../core/build/index.js';
 import { sync } from '../core/fetch/sync.js';
 import { Store } from '../core/store/db.js';
@@ -144,6 +145,25 @@ program
         `\n${stats.stored}/${stats.known} userpics stored for ${stats.people} people` +
           (stats.failed > 0 ? `, ${stats.failed} gone` : ''),
       );
+    } finally {
+      store.close();
+    }
+  });
+
+program
+  .command('video-posters')
+  .description('Download a poster frame for each recovered YouTube embed.')
+  .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
+  .action(async (opts: { out: string }) => {
+    const store = Store.open(opts.out);
+    try {
+      const known = (store.query('SELECT COUNT(*) AS n FROM entry_embeds') as { n: number }[])[0]?.n;
+      if (known === undefined || known === 0) {
+        console.error('No embeds known yet. They are scraped by the live audit.');
+        process.exit(2);
+      }
+      const stats = await downloadEmbedThumbs(opts.out, { store, report: renderProgress() });
+      console.log(`\n${stats.stored}/${stats.known} video posters stored` + (stats.failed > 0 ? `, ${stats.failed} gone` : ''));
     } finally {
       store.close();
     }

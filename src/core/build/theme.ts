@@ -265,21 +265,24 @@ details.lj-cut summary {
 }
 .dead-image-label { font-weight: 700; }
 .dead-image-url, .dead-image-why { color: var(--ink-2); word-break: break-all; }
-/* A recovered video. The play card is a link (works with no JS, and offline it
-   just opens the link); a click upgrades it to a real inline player when online.
-   16:9, so the swapped-in iframe keeps its shape without reflowing the entry. */
-.lj-video, .lj-video-frame {
-  display: block; width: 100%; max-width: 40rem; aspect-ratio: 16 / 9; margin: 1rem 0;
-  border: 0; border-radius: var(--radius);
+/* A recovered video. It CANNOT play inline: a YouTube player fails from file://
+   with error 153 (proven — the same video plays over http and errors over file),
+   so the card opens the video on YouTube instead, over a poster frame stored
+   locally so it still shows offline. 16:9, the shape of the player it replaces. */
+.lj-video {
+  display: block; position: relative; width: 100%; max-width: 40rem;
+  aspect-ratio: 16 / 9; margin: 1rem 0; border-radius: var(--radius);
+  overflow: hidden; background: var(--ink); text-decoration: none;
 }
-.embed-play {
-  display: flex; align-items: center; justify-content: center;
-  width: 100%; height: 100%;
-  background: var(--ink); color: #fff; text-decoration: none;
-  font-family: var(--meta); font-size: 13px; letter-spacing: .04em;
+.lj-video img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.play-badge {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; gap: .4rem;
+  background: rgba(20, 22, 28, .82); color: #fff;
+  padding: .5rem .9rem; border-radius: 999px;
+  font-family: var(--meta); font-size: 12px; letter-spacing: .03em;
 }
-.embed-play:hover { background: var(--rose); }
-.lj-video-frame { background: #000; }
+.lj-video:hover .play-badge { background: var(--rose); }
 
 .embed-lost, .lj-lost {
   font-family: var(--meta); font-size: 11px; color: var(--ink-2);

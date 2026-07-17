@@ -183,9 +183,15 @@ CREATE TABLE IF NOT EXISTS comment_userpics (
 -- Ordinal, because an entry can hold more than one and their order is the only
 -- thing tying them back to the tags in the body.
 CREATE TABLE IF NOT EXISTS entry_embeds (
-  ditemid  INTEGER NOT NULL,
-  idx      INTEGER NOT NULL,
-  url      TEXT NOT NULL,
+  ditemid    INTEGER NOT NULL,
+  idx        INTEGER NOT NULL,
+  url        TEXT NOT NULL,
+  -- The video's poster, downloaded locally so the card shows a real frame
+  -- offline. A YouTube player itself cannot load from file:// (it needs a valid
+  -- referrer and gets error 153), so the poster + a link out is the honest
+  -- ceiling for an offline archive. NULL until fetched.
+  thumb_hash TEXT,
+  fetched_at TEXT,
   PRIMARY KEY (ditemid, idx)
 );
 `;

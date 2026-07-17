@@ -459,15 +459,13 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
   border-radius: 2px 2px 0 0; min-height: 2px;
 }
 .hour:hover i { background: var(--ink); }
-/* The axis is its OWN row beneath the bars, positioned by percent, so a label
-   sits under the bars instead of looking like it lifts one. The last tick (24)
-   pulls fully left of its point so it closes the right edge; the first sits flush. */
-.hours-axis { position: relative; height: 1.2em; margin-top: .35rem; }
+/* The axis mirrors the bar row exactly — same flex, same gap — so every label
+   sits centred under its own bar with no positioning math. */
+.hours-axis { display: flex; gap: 2px; margin-top: .35rem; }
 .hours-axis span {
-  position: absolute; transform: translateX(-50%);
+  flex: 1; text-align: center;
   font-family: var(--meta); font-size: 9px; color: var(--ink-2);
 }
-/* Every tick centres under its bar; no endpoint tick to special-case. */
 
 .bars { list-style: none; padding: 0; margin: 0; }
 .bars li { padding: 1px 0; }

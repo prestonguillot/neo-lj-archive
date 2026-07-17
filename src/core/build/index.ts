@@ -1240,14 +1240,9 @@ export async function buildSite(
         label: `${pad(h)}:00 — ${n} ${n === 1 ? 'entry' : 'entries'}`,
         href: n > 0 ? rr + hourPath(h) : null,
       })),
-      // Military time, and it ends on 23 — the LAST bar. The chart is 24 bars for
-      // hours 00-23; stopping the labels at 21 left the two rightmost bars looking
-      // unlabelled, as if the axis were cut off. Every tick centres under its bar:
-      // bar h spans [h/24, (h+1)/24], middle (h + 0.5)/24.
-      hourTicks: [0, 3, 6, 9, 12, 15, 18, 21, 23].map((h) => ({
-        label: pad(h),
-        pct: ((h + 0.5) / 24) * 100,
-      })),
+      // Every hour, 00..23 — one label per bar. A subset (…18, 21, 23) left uneven
+      // gaps at the end; a label under each bar is uniform by construction.
+      hourTicks: Array.from({ length: 24 }, (_, h) => ({ label: pad(h) })),
       moods: moodRows.map((r) => ({
         name: esc(r.name),
         n: r.n,

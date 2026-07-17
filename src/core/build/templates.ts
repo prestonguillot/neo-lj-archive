@@ -364,7 +364,7 @@ export const RETROSPECT = `
     <% }) %>
   </div>
   <div class="hours-axis">
-    <% hourTicks.forEach(function (t) { %><span style="left: <%= t.pct %>%"><%= t.label %></span><% }) %>
+    <% hourTicks.forEach(function (t) { %><span><%= t.label %></span><% }) %>
   </div>
 </section>
 

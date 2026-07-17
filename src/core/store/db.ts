@@ -396,6 +396,18 @@ export class Store {
     };
   }
 
+  /**
+   * Link a userpic to the blob its bytes landed in.
+   *
+   * fetched_at is stamped even when the hash is undefined, so a pic that 404s is
+   * recorded as tried rather than retried on every run.
+   */
+  linkUserpicBlob(picid: number, hash: string | undefined, now = new Date().toISOString()): void {
+    this.#db
+      .prepare('UPDATE userpics SET hash = ?, fetched_at = ? WHERE picid = ?')
+      .run(hash ?? null, now, picid);
+  }
+
   /** Escape hatch for tests and the build stage. */
   query(sql: string, ...params: (string | number | null)[]): unknown[] {
     return this.#db.prepare(sql).all(...params);

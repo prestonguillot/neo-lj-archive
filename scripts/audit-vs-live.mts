@@ -98,8 +98,11 @@ interface Row {
 function sample(seen: Set<string>): Row[] {
   const shapes: [string, string][] = [
     ['lj-embed', "body LIKE '%<lj-embed%'"],
-    ['lj-poll', "body LIKE '%<lj-poll%'"],
-    ['lj-template', "body LIKE '%<lj-template%'"],
+    // lj-poll and lj-template are DELIBERATELY not sampled. Four of them audited
+    // and all four diverge identically: LJ renders questions it kept on its own
+    // servers, the export has only <lj-poll-NNN>, and the page already says so.
+    // Auditing more would re-confirm a known, unrecoverable class at 2s a request
+    // and find nothing new. 25 entries carry them; none is checkable this way.
     ['lj-cut', "body LIKE '%<lj-cut%'"],
     ['table', "body LIKE '%<table%'"],
     ['lj-user', "body LIKE '%<lj user%'"],

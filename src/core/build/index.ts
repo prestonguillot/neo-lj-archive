@@ -352,12 +352,20 @@ export async function buildSite(
     }
     return undefined;
   };
-  const embedsByEntry = new Map<number, (string | undefined)[]>();
+  type EmbedInfo = { watch: string; poster?: string };
+  const embedsByEntry = new Map<number, (EmbedInfo | undefined)[]>();
   for (const r of store.query(
-    'SELECT ditemid, idx, url FROM entry_embeds ORDER BY ditemid, idx',
-  ) as { ditemid: number; idx: number; url: string }[]) {
+    `SELECT e.ditemid, e.idx, e.url, a.local_path AS poster
+       FROM entry_embeds e
+       LEFT JOIN assets a ON a.hash = e.thumb_hash AND a.status = 'ok'
+      ORDER BY e.ditemid, e.idx`,
+  ) as { ditemid: number; idx: number; url: string; poster: string | null }[]) {
+    const watch = embedUrlOf(r.url);
     const list = embedsByEntry.get(r.ditemid) ?? [];
-    list[r.idx] = embedUrlOf(r.url);
+    list[r.idx] =
+      watch !== undefined
+        ? { watch, ...(r.poster !== null ? { poster: r.poster } : {}) }
+        : undefined;
     embedsByEntry.set(r.ditemid, list);
   }
 
@@ -1232,13 +1240,11 @@ export async function buildSite(
         label: `${pad(h)}:00 — ${n} ${n === 1 ? 'entry' : 'entries'}`,
         href: n > 0 ? rr + hourPath(h) : null,
       })),
-      // A real axis: ticks every 3 hours from 0 to 24, placed by fraction of the
-      // day so midnight sits under the first bar and 24 closes the right edge.
-      // Military time, 00..21. Not am/pm: the old axis printed "12a" at both 0 and
-      // 24, wrong twice — it's a 24-bar chart of hours 00-23, and there is no 24.
-      // Each tick centres under its bar: bar h spans [h/24, (h+1)/24], middle
-      // (h + 0.5)/24.
-      hourTicks: [0, 3, 6, 9, 12, 15, 18, 21].map((h) => ({
+      // Military time, and it ends on 23 — the LAST bar. The chart is 24 bars for
+      // hours 00-23; stopping the labels at 21 left the two rightmost bars looking
+      // unlabelled, as if the axis were cut off. Every tick centres under its bar:
+      // bar h spans [h/24, (h+1)/24], middle (h + 0.5)/24.
+      hourTicks: [0, 3, 6, 9, 12, 15, 18, 21, 23].map((h) => ({
         label: pad(h),
         pct: ((h + 0.5) / 24) * 100,
       })),

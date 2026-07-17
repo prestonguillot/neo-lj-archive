@@ -263,32 +263,44 @@ describe('renderBody — emoticons that look like markup', () => {
 });
 
 describe('renderBody — recovered embeds', () => {
-  // catches: a recovered video URL not being shown. The whole point of scraping
-  // the embed URL off the rendered page was to link it; a marker that ignores it
-  // wastes the recovery.
-  it('links an lj-embed to its recovered URL', () => {
+  // catches: a recovered video not being linked. A YouTube player can't load from
+  // file:// (error 153), so the card links OUT to the video — but it must link.
+  it('links a recovered embed out to its video', () => {
     const html = renderBody(
       '<lj-embed id="42">',
-      ctx({ embedUrl: () => 'https://www.youtube.com/watch?v=abc' }),
+      ctx({ embedUrl: () => ({ watch: 'https://www.youtube.com/watch?v=abc' }) }),
     );
     expect(html).toContain('href="https://www.youtube.com/watch?v=abc"');
+    // Opens elsewhere, and does NOT try to embed a player (which would 153).
+    expect(html).toContain('target="_blank"');
+    expect(html).not.toContain('<iframe');
+  });
+
+  // catches: a downloaded poster not being shown. The poster is what makes the
+  // card read as a video rather than a link, and it's stored locally so it shows
+  // offline — the whole reason it was fetched.
+  it('shows the local poster over the card when there is one', () => {
+    const html = renderBody(
+      '<lj-embed id="1">',
+      ctx({ embedUrl: () => ({ watch: 'https://youtu.be/x', poster: 'blobs/aa/bb.jpg' }) }),
+    );
+    expect(html).toContain('src="../blobs/aa/bb.jpg"');
   });
 
   // catches: the ordinal mapping drifting. The Nth lj-embed in the body must get
-  // the Nth recovered URL — off-by-one here attaches the wrong video to a post.
-  it('maps recovered URLs to embeds in document order', () => {
-    const urls = ['https://youtu.be/A', 'https://youtu.be/B'];
+  // the Nth recovered video — off-by-one attaches the wrong video to a post.
+  it('maps recovered videos to embeds in document order', () => {
+    const urls = [{ watch: 'https://youtu.be/A' }, { watch: 'https://youtu.be/B' }];
     const html = renderBody(
       'one <lj-embed id="1"> two <lj-embed id="2">',
       ctx({ embedUrl: (i) => urls[i] }),
     );
-    // Both survive, in order, and the prose between them too.
     expect(html.indexOf('youtu.be/A')).toBeLessThan(html.indexOf('youtu.be/B'));
     expect(html).toContain('two');
   });
 
-  // catches: an unrecovered embed still claiming to have a link. 7 of 28 carried
-  // only dead session tokens; those stay plain markers.
+  // catches: an unrecovered embed still claiming to be a video. 7 of 28 carried
+  // only dead session tokens; those stay plain markers, not links.
   it('falls back to a plain marker when nothing was recovered', () => {
     const html = renderBody('<lj-embed id="9">', ctx({ embedUrl: () => undefined }));
     expect(html).toContain('embedded media');

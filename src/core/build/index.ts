@@ -164,6 +164,7 @@ const tagPathVia = (slugs: Map<string, string>, tag: string): string =>
   `tags/${slugs.get(tag) ?? slugify(tag)}.html`;
 
 const otdPath = (m: number, d: number): string => `onthisday/${pad(m)}-${pad(d)}.html`;
+const monthPath = (y: number, m: number): string => `calendar/${y}/${pad(m)}/index.html`;
 
 /** How many '../' to get from a page back to the site root. */
 const rootFor = (path: string): string => '../'.repeat(path.split('/').length - 1);
@@ -252,6 +253,35 @@ export async function buildSite(
   // One assignment for the whole journal, so two tags can never share a page.
   const tagSlugs = assignSlugs(tagRows.map((t) => t.tag));
 
+  const meRow = store.query(
+    'SELECT posterid AS id FROM users WHERE username = ?',
+    config.username,
+  ) as {
+    id: number;
+  }[];
+  const myId = meRow[0]?.id ?? -1;
+
+  // Hoisted: Retrospect reports these and it builds before the index does.
+  //
+  // Joined to asset_refs on purpose. Userpics are stored in `assets` too — that
+  // is what makes the build copy them into the site for free — but they are not
+  // images from the writing, and counting them here reported "426 images
+  // recovered" when the entries and comments hold 203. A number nobody can check
+  // is a number that drifts.
+  const imagesKept =
+    (
+      store.query(
+        `SELECT COUNT(DISTINCT a.hash) AS n FROM assets a
+           JOIN asset_refs r ON r.hash = a.hash WHERE a.status = 'ok'`,
+      ) as { n: number }[]
+    )[0]?.n ?? 0;
+  const imagesLost =
+    (
+      store.query(
+        'SELECT COUNT(*) AS n FROM asset_refs WHERE hash IS NULL AND fetched_at IS NOT NULL',
+      ) as { n: number }[]
+    )[0]?.n ?? 0;
+
   const heldDitemids = new Set(entries.map((e) => e.ditemid));
   const tagsByEntry = new Map<number, string[]>();
   for (const t of tagRows) tagsByEntry.set(t.itemid, [...(tagsByEntry.get(t.itemid) ?? []), t.tag]);
@@ -286,11 +316,21 @@ export async function buildSite(
       return p.y === y && p.m === m;
     }).length;
 
-  // "On this day" in the rail needs a date, and a build must be reproducible —
-  // the same archive.db has to produce the same bytes on any day. So it points at
-  // the date of the NEWEST entry, not at whatever today happens to be.
+  // The rail's "On this day" is retargeted to the real today by six lines of JS in
+  // the layout. This is the NO-JS fallback, and it must be deterministic: the same
+  // archive.db has to build the same bytes on any day, so it cannot be Date.now().
   const newest = parts(entries[entries.length - 1]?.eventtime ?? '2004-01-01 00:00');
   const todayHref = `${pad(newest.m)}-${pad(newest.d)}.html`;
+  // Which dates actually have a page, so the script can walk forward to the next
+  // real one instead of pointing at a 404 on a day nothing was ever written.
+  const otdDates = [
+    ...new Set(
+      entries.map((e) => {
+        const p = parts(e.eventtime);
+        return `${pad(p.m)}-${pad(p.d)}`;
+      }),
+    ),
+  ].sort();
 
   const page = (rel: string, title: string, content: string): Promise<void> =>
     write(
@@ -302,6 +342,7 @@ export async function buildSite(
         content,
         railYears,
         todayHref,
+        otdDates,
         ...totals,
       }),
     );
@@ -639,45 +680,117 @@ export async function buildSite(
   const anonCount =
     (store.query('SELECT COUNT(*) AS n FROM comments WHERE posterid IS NULL') as { n: number }[])[0]
       ?.n ?? 0;
+  // The author is not one of "the people". He commented on his own journal 1,713
+  // times, which makes him the top name on a list of everyone ELSE who showed up.
+  const others = perPerson.filter((p) => p.id !== myId);
+
+  const personPath = (name: string): string => `people/${slugify(name)}.html`;
+  // Same collision rule as tags: two usernames must never share a page.
+  const personSlugs = assignSlugs(others.map((p) => p.name));
+  const personPathVia = (name: string): string =>
+    `people/${personSlugs.get(name) ?? slugify(name)}.html`;
+
+  const commentsByPoster = new Map<number, CommentRow[]>();
+  for (const c of comments)
+    if (c.posterid !== null)
+      commentsByPoster.set(c.posterid, [...(commentsByPoster.get(c.posterid) ?? []), c]);
+  const entryByItemid = new Map(entries.map((e) => [e.itemid, e]));
+
+  const spanOf = (cs: CommentRow[]): string => {
+    const ds = cs
+      .map((c) => c.date ?? '')
+      .filter(Boolean)
+      .sort();
+    const y = (d: string): string => d.slice(0, 4);
+    if (ds.length === 0) return '';
+    const a = y(ds[0]!);
+    const b = y(ds[ds.length - 1]!);
+    return a === b ? a : `${a}\u2013${b}`;
+  };
+
   await page(
     'people/index.html',
     'People',
     render(T.PEOPLE, {
       root: rootFor('people/index.html'),
-      count: perPerson.length,
-      total: perPerson.reduce((a, p) => a + p.n, 0),
+      count: others.length,
+      total: others.reduce((a, p) => a + p.n, 0),
       anon: anonCount,
-      people: perPerson.map((p) => ({
+      people: others.map((p) => ({
         name: esc(p.name),
         n: p.n,
-        href: esc(journalUrl(p.name)),
+        // To the conversations, not to a journal as dead as this one.
+        href: rootFor('people/index.html') + personPathVia(p.name),
+        span: spanOf(commentsByPoster.get(p.id) ?? []),
         pic: faceFor.get(p.id),
       })),
     }),
   );
   pages++;
+
+  // One page per person: the entries they turned up in, and how much.
+  for (const p of others) {
+    const theirs = commentsByPoster.get(p.id) ?? [];
+    const byEntry = new Map<number, number>();
+    for (const c of theirs) byEntry.set(c.jitemid, (byEntry.get(c.jitemid) ?? 0) + 1);
+    const rel = personPathVia(p.name);
+    const root = rootFor(rel);
+    const list = [...byEntry.entries()]
+      .map(([itemid, n]) => ({ e: entryByItemid.get(itemid), n }))
+      .filter((x) => x.e !== undefined)
+      .sort((a, b) => (a.e!.eventtime < b.e!.eventtime ? 1 : -1));
+    await page(
+      rel,
+      p.name,
+      render(T.PERSON, {
+        name: esc(p.name),
+        n: p.n,
+        entryCount: list.length,
+        span: spanOf(theirs),
+        ljHref: esc(journalUrl(p.name)),
+        entries: list.map((x) => {
+          const q = parts(x.e!.eventtime);
+          return {
+            href: root + entryPath(x.e!.ditemid),
+            date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
+            subject: esc(x.e!.subject ?? '(no subject)'),
+            n: x.n,
+          };
+        }),
+      }),
+    );
+    pages++;
+  }
   report({ kind: 'done', task: 'people', summary: `${perPerson.length} people` });
 
   // --- userpic gallery (§11 M4) -----------------------------------------
   report({ kind: 'start', task: 'faces' });
-  // "Mine" = every userid that is NOT a commenter. Derived from the users table
-  // rather than from a subquery on the first row of entry_userpics, which was
-  // silently betting that the first row happened to be the author's.
+  // The author is identified BY NAME.
+  //
+  // Two earlier versions got this wrong in opposite directions: one took his
+  // userid from a subquery on the first row of entry_userpics (betting that row
+  // was his), and the replacement used "every userid that is NOT a commenter" —
+  // which excluded him completely, because he commented on his own journal 1,713
+  // times. The page rendered "0 of yours". His name is the only thing that
+  // actually identifies him.
   const myPics = store.query(
-    `SELECT a.local_path AS p, COUNT(eu.ditemid) AS n
+    `SELECT a.local_path AS pic, COUNT(eu.ditemid) AS n
        FROM userpics u
        JOIN assets a ON a.hash = u.hash AND a.status = 'ok'
        LEFT JOIN entry_userpics eu ON eu.picid = u.picid
-      WHERE u.userid NOT IN (SELECT posterid FROM users)
+      WHERE u.userid = ?
       GROUP BY u.picid ORDER BY n DESC`,
-  ) as { p: string; n: number }[];
+    myId,
+  ) as { pic: string; n: number }[];
   const theirPics = store.query(
-    `SELECT a.local_path AS p, us.username AS who
+    `SELECT a.local_path AS pic, us.username AS who
        FROM userpics u
        JOIN assets a ON a.hash = u.hash AND a.status = 'ok'
        JOIN users us ON us.posterid = u.userid
+      WHERE u.userid <> ?
       GROUP BY u.picid ORDER BY us.username`,
-  ) as { p: string; who: string }[];
+    myId,
+  ) as { pic: string; who: string }[];
   await page(
     'userpics/index.html',
     'Userpics',
@@ -694,17 +807,178 @@ export async function buildSite(
     summary: `${myPics.length} yours, ${theirPics.length} theirs`,
   });
 
-  // --- index + theme ----------------------------------------------------
-  const imagesKept =
-    (store.query("SELECT COUNT(*) AS n FROM assets WHERE status = 'ok'") as { n: number }[])[0]
-      ?.n ?? 0;
-  const imagesLost =
+  // --- month pages ------------------------------------------------------
+  // Removed once as redundant with the year grid, and back because the heatmap
+  // needs a real landing place: "click a month" has to reach that month's posts,
+  // not a calendar grid scrolled to an anchor.
+  report({ kind: 'start', task: 'months' });
+  const byMonth = new Map<string, EntryRow[]>();
+  for (const e of entries) {
+    const p = parts(e.eventtime);
+    byMonth.set(`${p.y}-${pad(p.m)}`, [...(byMonth.get(`${p.y}-${pad(p.m)}`) ?? []), e]);
+  }
+  const monthKeys = [...byMonth.keys()].sort();
+  for (const [i, key] of monthKeys.entries()) {
+    const [ys, ms] = key.split('-');
+    const y = Number(ys);
+    const m = Number(ms);
+    const rel = monthPath(y, m);
+    const root = rootFor(rel);
+    const mine = byMonth.get(key) ?? [];
+    const lbl = (k: string): string => {
+      const [yy, mm] = k.split('-');
+      return `${MONTHS[Number(mm) - 1]} ${yy}`;
+    };
+    const prevK = monthKeys[i - 1];
+    const nextK = monthKeys[i + 1];
+    await page(
+      rel,
+      lbl(key),
+      render(T.MONTH, {
+        name: lbl(key),
+        count: mine.length,
+        entries: mine.map((e) => {
+          const q = parts(e.eventtime);
+          return {
+            href: root + entryPath(e.ditemid),
+            date: `${pad(q.m)}-${pad(q.d)}`,
+            subject: esc(e.subject ?? '(no subject)'),
+            n: (commentsByEntry.get(e.itemid) ?? []).length,
+          };
+        }),
+        prev: prevK
+          ? {
+              href: root + monthPath(Number(prevK.split('-')[0]), Number(prevK.split('-')[1])),
+              label: lbl(prevK),
+            }
+          : null,
+        next: nextK
+          ? {
+              href: root + monthPath(Number(nextK.split('-')[0]), Number(nextK.split('-')[1])),
+              label: lbl(nextK),
+            }
+          : null,
+      }),
+    );
+    pages++;
+  }
+  report({ kind: 'done', task: 'months', summary: `${monthKeys.length} months` });
+
+  // --- retrospect (§11 M4) ----------------------------------------------
+  report({ kind: 'start', task: 'retrospect' });
+  const hourCounts = Array.from(
+    { length: 24 },
+    (_, h) => entries.filter((e) => Number(parts(e.eventtime).hh) === h).length,
+  );
+  const hourPeak = Math.max(1, ...hourCounts);
+  const moodRows = store.query(
+    `SELECT COALESCE(e.mood, m.name) AS name, COUNT(*) AS n
+       FROM entries e LEFT JOIN moods m ON m.moodid = e.moodid
+      WHERE COALESCE(e.mood, m.name) IS NOT NULL
+      GROUP BY LOWER(COALESCE(e.mood, m.name)) ORDER BY n DESC LIMIT 8`,
+  ) as { name: string; n: number }[];
+  // The REAL total, not the sum of the top 8 — the page says "N entries recorded
+  // a mood", and the top 8 is not that number.
+  const moodTotal =
     (
       store.query(
-        'SELECT COUNT(*) AS n FROM asset_refs WHERE hash IS NULL AND fetched_at IS NOT NULL',
+        'SELECT COUNT(*) AS n FROM entries WHERE mood IS NOT NULL OR moodid IS NOT NULL',
       ) as { n: number }[]
     )[0]?.n ?? 0;
+  const moodPeak = Math.max(1, ...moodRows.map((r) => r.n));
+  const deepest = (() => {
+    const byId = new Map(comments.map((c) => [c.id, c]));
+    let best = 0;
+    for (const c of comments) {
+      let d = 1;
+      let p = c.parentid;
+      while (p !== null && p !== undefined) {
+        d++;
+        p = byId.get(p)?.parentid ?? null;
+      }
+      best = Math.max(best, d);
+    }
+    return best;
+  })();
+  // Real entries only: the 1984 post is a deliberate backdated joke and would
+  // otherwise report this journal as spanning 26 years.
+  const realTimes = entries
+    .map((e) => e.eventtime)
+    .filter((t) => t > '2000')
+    .sort();
+  const firstT = realTimes[0] ?? '';
+  const lastT = realTimes[realTimes.length - 1] ?? '';
+  const dayMs = 86_400_000;
+  const spanDays =
+    firstT && lastT
+      ? Math.round(
+          (Date.parse(lastT.replace(' ', 'T') + 'Z') - Date.parse(firstT.replace(' ', 'T') + 'Z')) /
+            dayMs,
+        )
+      : 0;
+  const privateN = entries.filter((e) => e.security === 'private').length;
 
+  await page(
+    'retrospect/index.html',
+    'Retrospect',
+    render(T.RETROSPECT, {
+      ...totals,
+      firstDate: firstT.slice(0, 10),
+      lastDate: lastT.slice(0, 10),
+      days: spanDays.toLocaleString('en-US'),
+      months: MONTHS.map((m) => m[0]),
+      heat: heatRows.map((r) => ({
+        ...r,
+        href: rootFor('retrospect/index.html') + yearPath(r.year),
+        cells: r.cells.map((c, mi) => ({
+          ...c,
+          href: byMonth.has(`${r.year}-${pad(mi + 1)}`)
+            ? rootFor('retrospect/index.html') + monthPath(r.year, mi + 1)
+            : null,
+        })),
+      })),
+      hours: hourCounts.map((n, h) => ({
+        pct: Math.round((n / hourPeak) * 100),
+        label: `${pad(h)}:00 — ${n} ${n === 1 ? 'entry' : 'entries'}`,
+        tick: h % 6 === 0 ? pad(h) : '',
+      })),
+      moods: moodRows.map((r) => ({
+        name: esc(r.name),
+        n: r.n,
+        pct: Math.round((r.n / moodPeak) * 100),
+      })),
+      moodTotal,
+      // The single funniest true thing in the data, said plainly.
+      moodNote:
+        (moodRows[0]?.n ?? 0) > moodTotal / 2
+          ? `More than half of them were "${esc(moodRows[0]?.name ?? '')}".`
+          : '',
+      privatePct: Math.round((privateN / Math.max(1, entries.length)) * 100),
+      privateNote: 'They stay private here in name only — this archive gates nothing.',
+      imagesKept,
+      imagesLost,
+      people: (store.query('SELECT COUNT(*) AS n FROM users') as { n: number }[])[0]?.n ?? 0,
+      userpicCount:
+        (
+          store.query('SELECT COUNT(*) AS n FROM userpics WHERE hash IS NOT NULL') as {
+            n: number;
+          }[]
+        )[0]?.n ?? 0,
+      facesPeople:
+        (
+          store.query(
+            'SELECT COUNT(DISTINCT userid) AS n FROM userpics WHERE hash IS NOT NULL',
+          ) as {
+            n: number;
+          }[]
+        )[0]?.n ?? 0,
+      deepest,
+    }),
+  );
+  pages++;
+  report({ kind: 'done', task: 'retrospect' });
+
+  // --- index + theme ----------------------------------------------------
   await page(
     'index.html',
     journal,
@@ -713,7 +987,7 @@ export async function buildSite(
       ...totals,
       // A decade at a glance, by month. 2004 has 348 entries and 2010 has 5, and
       // that curve is the story — a grid of year chips says nothing about shape.
-      heat: heatRows,
+      years: yearList.map((y) => ({ ...y, href: yearPath(y.year) })),
       recent: entries
         .slice(-30)
         .reverse()

@@ -21,6 +21,24 @@ export const LAYOUT = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><%= title %></title>
 <link rel="stylesheet" href="<%= root %>style.css">
+<script>
+/* "On this day" means today, and the build must be reproducible — the same
+   archive.db must produce the same bytes on any day, so the date cannot be baked
+   in. This retargets the link when the page opens. With JS off the href still
+   works; it just lands on the newest entry's date instead. The archive never
+   REQUIRES script (DESIGN.md §13) — this only sharpens a link that already works.
+   Dates that were never written on have no page, so it walks forward to the next
+   one that exists rather than sending you to a 404. */
+window.addEventListener('DOMContentLoaded', function () {
+  var a = document.getElementById('otd');
+  if (!a) return;
+  var have = <%- JSON.stringify(otdDates) %>;
+  var now = new Date();
+  var md = String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+  var next = have.find(function (d) { return d >= md; }) || have[0];
+  if (next) a.href = a.getAttribute('href').replace(/[^/]+$/, next + '.html');
+});
+</script>
 </head>
 <body>
 <div class="shell">
@@ -30,8 +48,9 @@ export const LAYOUT = `<!doctype html>
     <nav>
       <a href="<%= root %>index.html">Journal</a>
       <a href="<%= root %>calendar/index.html">Calendar</a>
-      <a href="<%= root %>onthisday/<%= todayHref %>">On this day</a>
+      <a id="otd" href="<%= root %>onthisday/<%= todayHref %>">On this day</a>
       <a href="<%= root %>tags/index.html">Tags</a>
+      <a href="<%= root %>retrospect/index.html">Retrospect</a>
       <a href="<%= root %>people/index.html">People</a>
       <a href="<%= root %>userpics/index.html">Userpics</a>
     </nav>
@@ -112,17 +131,11 @@ export const INDEX = `
 
 <section class="years">
   <h2>By year</h2>
-  <div class="heat">
-    <% heat.forEach(function (row) { %>
-    <div class="heat-row">
-      <a class="y" href="<%= row.href %>"><%= row.year %></a>
-      <span class="heat-cells">
-        <% row.cells.forEach(function (c) { %><i data-n="<%= c.level %>" title="<%= c.label %>"></i><% }) %>
-      </span>
-      <span class="t"><%= row.total %></span>
-    </div>
+  <ul class="year-grid">
+    <% years.forEach(function (y) { %>
+      <li><a href="<%= y.href %>"><b><%= y.year %></b><span><%= y.count %></span></a></li>
     <% }) %>
-  </div>
+  </ul>
 </section>
 `;
 
@@ -223,9 +236,28 @@ export const PEOPLE = `
   <% people.forEach(function (p) { %>
     <li>
       <% if (p.pic) { %><img class="userpic-sm" src="<%= root %><%= p.pic %>" alt="" loading="lazy"><% } else { %><span class="userpic-sm nopic"></span><% } %>
-      <a class="lj-user" href="<%= p.href %>"><%= p.name %></a>
+      <a class="who" href="<%= p.href %>"><%= p.name %></a>
+      <span class="span"><%= p.span %></span>
       <span class="n"><%= p.n %></span>
     </li>
+  <% }) %>
+</ul>
+`;
+
+/**
+ * One person, and where they actually turn up (§11 M4).
+ *
+ * The first version linked each name to their LiveJournal, which is as dead as
+ * this one — a link out of the archive into nothing. What you want from a name
+ * is the conversations: which posts they showed up in, and what they said.
+ */
+export const PERSON = `
+<h1><%= name %></h1>
+<p class="muted"><%= n %> comments on <%= entryCount %> of your entries, <%= span %><% if (ljHref) { %> &middot; <a href="<%= ljHref %>">their journal</a><% } %></p>
+
+<ul class="entry-list">
+  <% entries.forEach(function (e) { %>
+    <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %><span class="c"><%= e.n %></span></a></li>
   <% }) %>
 </ul>
 `;
@@ -266,4 +298,89 @@ export const FACES = `
   </ul>
 </section>
 <% } %>
+`;
+
+/** A month's posts. The heatmap needs somewhere real to land. */
+export const MONTH = `
+<h1><%= name %></h1>
+<p class="muted"><%= count %> entries</p>
+<ul class="entry-list">
+  <% entries.forEach(function (e) { %>
+    <li><a href="<%= e.href %>"><span class="d"><%= e.date %></span> <%= e.subject %>
+      <% if (e.n) { %><span class="c"><%= e.n %></span><% } %></a></li>
+  <% }) %>
+</ul>
+<nav class="spine">
+  <% if (prev) { %><a class="prev" href="<%= prev.href %>">&larr; <%= prev.label %></a><% } else { %><span></span><% } %>
+  <% if (next) { %><a class="next" href="<%= next.href %>"><%= next.label %> &rarr;</a><% } %>
+</nav>
+`;
+
+/**
+ * Retrospect (§11 M4) — the archive looking at itself.
+ *
+ * Every number here is one the archive had to FIGHT for. The heatmap only exists
+ * because the fetch walked backwards to 2003; the moods only resolve because we
+ * pulled LJ's vocabulary; the lost-image count is honest only because we sniffed
+ * bytes instead of trusting a 200.
+ *
+ * No chart library and no external request: this has to open from file:// in 2040
+ * (§13). Bars are divs, the heatmap is a grid, tooltips are CSS. Nothing here
+ * needs JavaScript to be readable.
+ */
+export const RETROSPECT = `
+<h1>Retrospect</h1>
+<p class="lede"><%= entryCount %> entries and <%= commentCount %> comments,
+  <%= firstDate %> to <%= lastDate %> &mdash; <%= days %> days.</p>
+
+<section class="viz">
+  <h2>The decade</h2>
+  <p class="viz-note">Every month, on one scale. Darker is more. Click a month to read it.</p>
+  <div class="heat">
+    <% heat.forEach(function (row) { %>
+    <div class="heat-row">
+      <a class="y" href="<%= row.href %>"><%= row.year %></a>
+      <span class="heat-cells">
+        <% row.cells.forEach(function (c) { %><% if (c.href) { %><a class="cell" data-n="<%= c.level %>" href="<%= c.href %>" data-tip="<%= c.label %>"></a><% } else { %><i class="cell" data-n="0" data-tip="<%= c.label %>"></i><% } %><% }) %>
+      </span>
+      <span class="t"><%= row.total %></span>
+    </div>
+    <% }) %>
+    <div class="heat-row heat-axis">
+      <span class="y"></span>
+      <span class="heat-cells"><% months.forEach(function (m) { %><span class="cell mlab"><%= m %></span><% }) %></span>
+      <span class="t"></span>
+    </div>
+  </div>
+</section>
+
+<section class="viz">
+  <h2>The hours</h2>
+  <p class="viz-note">When you wrote. Local time, as LiveJournal recorded it.</p>
+  <div class="hours">
+    <% hours.forEach(function (h) { %>
+      <span class="hour" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i><b><%= h.tick %></b></span>
+    <% }) %>
+  </div>
+</section>
+
+<section class="viz">
+  <h2>How you felt</h2>
+  <p class="viz-note"><%= moodTotal %> of <%= entryCount %> entries recorded a mood &mdash; most through LiveJournal's own vocabulary, which is why they resolve to words at all. <%= moodNote %></p>
+  <ul class="bars">
+    <% moods.forEach(function (m) { %>
+      <li><span class="k"><%= m.name %></span><span class="bar"><i style="width: <%= m.pct %>%"></i></span><span class="v"><%= m.n %></span></li>
+    <% }) %>
+  </ul>
+</section>
+
+<section class="viz">
+  <h2>What was kept</h2>
+  <ul class="facts">
+    <li><b><%= privatePct %>%</b> of these entries were private. <%= privateNote %></li>
+    <li><b><%= imagesKept %></b> images from your entries and comments are stored here; <b><%= imagesLost %></b> are gone from the internet and say so where they stood.</li>
+    <li><b><%= userpicCount %></b> userpics recovered across <%= facesPeople %> people &mdash; none of which LiveJournal's API would admit to.</li>
+    <li><b><%= people %></b> people left comments. The deepest thread runs <b><%= deepest %></b> replies.</li>
+  </ul>
+</section>
 `;

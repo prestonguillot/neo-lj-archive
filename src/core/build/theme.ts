@@ -383,21 +383,70 @@ table.cal td span { display: block; padding: .25rem 0; color: var(--ink-2); opac
   text-align: center; word-break: break-all; line-height: 1.3;
 }
 
+/* --- retrospect -------------------------------------------------------- */
 /*
- * The heatmap. A decade at a glance: 2004 has 348 entries and 2010 has 5, and
- * that shape IS the story of the journal — no caption says it better.
+ * No chart library and no external request: this opens from file:// in 2040
+ * (§13). Bars are divs, the heatmap is a grid, tooltips are CSS. Every number
+ * here is readable with JavaScript off.
+ *
+ * SEQUENTIAL data, so ONE hue light->dark — never a rainbow. Four steps rather
+ * than a gradient, because the eye reads buckets and not interpolation.
  */
-.heat { display: flex; flex-direction: column; gap: .25rem; margin: 0 0 2.5rem; max-width: 62ch; }
+.viz { margin: 0 0 3.5rem; max-width: 62ch; }
+.viz h2 { margin: 0 0 .2rem; }
+.viz-note { font-family: var(--meta); font-size: 11px; color: var(--ink-2); margin: 0 0 1rem; }
+.lede { font-size: 1.05rem; max-width: 48ch; margin-bottom: 2.5rem; }
+
+.heat { display: flex; flex-direction: column; gap: 2px; margin: 0; }
 .heat-row { display: flex; align-items: center; gap: .5rem; font-family: var(--meta); font-size: 10px; }
 .heat-row .y { min-width: 2.6rem; color: var(--ink-2); text-decoration: none; }
 .heat-row .y:hover { color: var(--rose); }
-.heat-cells { display: flex; gap: 1px; flex: 1; }
-.heat-cells i { flex: 1; height: 11px; border-radius: 1px; background: var(--sunk); }
-/* Four steps, not a gradient: the eye reads buckets, not interpolation. */
-.heat-cells i[data-n="1"] { background: color-mix(in srgb, var(--rose) 25%, var(--sunk)); }
-.heat-cells i[data-n="2"] { background: color-mix(in srgb, var(--rose) 55%, var(--sunk)); }
-.heat-cells i[data-n="3"] { background: var(--rose); }
+.heat-cells { display: flex; gap: 2px; flex: 1; }
+.cell {
+  flex: 1; height: 14px; border-radius: 2px; background: var(--sunk);
+  display: block; position: relative;
+}
+a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
+.cell[data-n='1'] { background: color-mix(in srgb, var(--rose) 22%, var(--sunk)); }
+.cell[data-n='2'] { background: color-mix(in srgb, var(--rose) 55%, var(--sunk)); }
+.cell[data-n='3'] { background: var(--rose); }
 .heat-row .t { min-width: 2.5rem; text-align: right; color: var(--ink-2); }
+.heat-axis .cell { background: none; height: auto; }
+.heat-axis .mlab { color: var(--ink-2); opacity: .5; text-align: center; font-size: 9px; }
+
+/* Hover says something. CSS only — a tooltip that needs JS is a tooltip that
+   eventually isn't there. */
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: var(--paper);
+  font-family: var(--meta); font-size: 10px; line-height: 1.4;
+  padding: .3rem .5rem; border-radius: var(--radius); white-space: nowrap;
+  pointer-events: none; z-index: 5;
+}
+
+.hours { display: flex; align-items: flex-end; gap: 2px; height: 110px; margin: 0; }
+.hour { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.hour i {
+  display: block; background: var(--rose); border-radius: 2px 2px 0 0; min-height: 2px;
+}
+.hour:hover i { background: var(--ink); }
+.hour b {
+  font-family: var(--meta); font-size: 9px; font-weight: 400; color: var(--ink-2);
+  text-align: center; padding-top: .2rem; min-height: 1em;
+}
+
+.bars { list-style: none; padding: 0; margin: 0; }
+.bars li { display: flex; align-items: center; gap: .6rem; padding: .18rem 0; }
+.bars .k { font-family: var(--meta); font-size: 11px; min-width: 8rem; color: var(--ink); }
+.bars .bar { flex: 1; height: 12px; background: var(--sunk); border-radius: 2px; }
+.bars .bar i { display: block; height: 100%; background: var(--rose); border-radius: 2px; }
+.bars .v { font-family: var(--meta); font-size: 10px; color: var(--ink-2); min-width: 2.5rem; text-align: right; }
+
+.facts { list-style: none; padding: 0; margin: 0; }
+.facts li { padding: .4rem 0; border-bottom: 1px solid var(--rule); font-size: .95rem; }
+.facts b { font-family: var(--display); font-size: 1.15rem; color: var(--rose); }
 .years, .tag-cloud, .year-grid, .months { max-width: 62ch; }
 .years h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; }
 

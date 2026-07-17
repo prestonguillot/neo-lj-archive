@@ -354,6 +354,10 @@ async function main(): Promise<void> {
     else if (gap > 0) dbLoss++;
     // Record every verdict, so the next chunk starts where this one stopped.
     state[String(r.ditemid)] = { shape: r.shape, gap: liveBody === null ? -1 : gap };
+    // Per entry, not per chunk. A run that is killed at 75/228 must keep its 75
+    // verdicts — the userpic rows already survive that way, and having the two
+    // halves of one traversal with different durability is a trap.
+    saveState(state);
 
     // The harvest the API won't give us, with its mapping intact.
     //
@@ -451,7 +455,7 @@ async function main(): Promise<void> {
   }
 
   await b.close();
-  saveState(state);
+  saveState(state); // redundant now — state is saved per entry — but harmless
 
   mkdirSync('./archive/audit', { recursive: true });
   writeFileSync('./archive/audit/vs-live.json', JSON.stringify(report, null, 2));

@@ -400,23 +400,22 @@ export function renderBody(html: string, ctx: RenderContext): string {
         recovered !== undefined
           ? el(
               'span',
-              [{ name: 'class', value: 'embed-lost' }],
+              [{ name: 'class', value: 'lj-video' }],
               [
-                text('▶ '),
                 el(
                   'a',
                   [
                     { name: 'href', value: recovered },
-                    { name: 'class', value: 'embed-link' },
+                    { name: 'class', value: 'embed-play' },
                   ],
-                  [text('embedded video')],
+                  [text('\u25B6 Watch this video')],
                 ),
               ],
             )
           : el(
               'span',
               [{ name: 'class', value: 'embed-lost' }],
-              [text(`▶ embedded media${rawUrl !== undefined ? ` (${rawUrl})` : ''}`)],
+              [text(`\u25B6 embedded media${rawUrl !== undefined ? ` (${rawUrl})` : ''}`)],
             );
 
       // <lj-embed> is VOID and the others are not, so they cannot share a branch.

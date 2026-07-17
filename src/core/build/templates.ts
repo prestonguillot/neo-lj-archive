@@ -29,6 +29,19 @@ export const LAYOUT = `<!doctype html>
    REQUIRES script (DESIGN.md §13) — this only sharpens a link that already works.
    Dates that were never written on have no page, so it walks forward to the next
    one that exists rather than sending you to a 404. */
+document.addEventListener('click', function (ev) {
+  var a = ev.target.closest ? ev.target.closest('a.embed-play') : null;
+  if (!a) return;
+  var m = /[?&]v=([^&]+)/.exec(a.href);
+  if (!m) return; // not a shape we can embed — let the link do its normal thing
+  ev.preventDefault();
+  var f = document.createElement('iframe');
+  f.src = 'https://www.youtube-nocookie.com/embed/' + m[1] + '?autoplay=1';
+  f.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';
+  f.allowFullscreen = true;
+  f.className = 'lj-video-frame';
+  a.replaceWith(f);
+});
 window.addEventListener('DOMContentLoaded', function () {
   var a = document.getElementById('otd');
   if (!a) return;
@@ -359,9 +372,12 @@ export const RETROSPECT = `
   <p class="viz-note">When you wrote, in the time LiveJournal recorded. Click an hour to read it.</p>
   <div class="hours">
     <% hours.forEach(function (h) { %>
-      <% if (h.href) { %><a class="hour" href="<%= h.href %>" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i><b><%= h.tick %></b></a>
-      <% } else { %><span class="hour" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i><b><%= h.tick %></b></span><% } %>
+      <% if (h.href) { %><a class="hour" href="<%= h.href %>" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i></a>
+      <% } else { %><span class="hour" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i></span><% } %>
     <% }) %>
+  </div>
+  <div class="hours-axis">
+    <% hourTicks.forEach(function (t) { %><span style="left: <%= t.pct %>%"><%= t.label %></span><% }) %>
   </div>
 </section>
 
@@ -370,7 +386,7 @@ export const RETROSPECT = `
   <p class="viz-note"><%= moodTotal %> of <%= entryCount %> entries recorded a mood.</p>
   <ul class="bars">
     <% moods.forEach(function (m) { %>
-      <li><a class="k" href="<%= m.href %>"><%= m.name %></a><span class="bar"><i style="width: <%= m.pct %>%"></i></span><span class="v"><%= m.n %></span></li>
+      <li><a class="barrow" href="<%= m.href %>" data-tip="<%= m.tip %>"><span class="k"><%= m.name %></span><span class="bar"><i style="width: <%= m.pct %>%"></i></span><span class="v"><%= m.n %></span></a></li>
     <% }) %>
   </ul>
 </section>
@@ -380,7 +396,7 @@ export const RETROSPECT = `
   <p class="viz-note"><%= musicTotal %> entries noted the music. Click an artist to read them.</p>
   <ul class="bars">
     <% artists.forEach(function (a) { %>
-      <li><a class="k" href="<%= a.href %>"><%= a.name %></a><span class="bar"><i style="width: <%= a.pct %>%"></i></span><span class="v"><%= a.n %></span></li>
+      <li><a class="barrow" href="<%= a.href %>" data-tip="<%= a.tip %>"><span class="k"><%= a.name %></span><span class="bar"><i style="width: <%= a.pct %>%"></i></span><span class="v"><%= a.n %></span></a></li>
     <% }) %>
   </ul>
 </section>

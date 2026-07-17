@@ -265,6 +265,22 @@ details.lj-cut summary {
 }
 .dead-image-label { font-weight: 700; }
 .dead-image-url, .dead-image-why { color: var(--ink-2); word-break: break-all; }
+/* A recovered video. The play card is a link (works with no JS, and offline it
+   just opens the link); a click upgrades it to a real inline player when online.
+   16:9, so the swapped-in iframe keeps its shape without reflowing the entry. */
+.lj-video, .lj-video-frame {
+  display: block; width: 100%; max-width: 40rem; aspect-ratio: 16 / 9; margin: 1rem 0;
+  border: 0; border-radius: var(--radius);
+}
+.embed-play {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  background: var(--ink); color: #fff; text-decoration: none;
+  font-family: var(--meta); font-size: 13px; letter-spacing: .04em;
+}
+.embed-play:hover { background: var(--rose); }
+.lj-video-frame { background: #000; }
+
 .embed-lost, .lj-lost {
   font-family: var(--meta); font-size: 11px; color: var(--ink-2);
   border: 1px dashed var(--rule); border-radius: var(--radius);
@@ -292,8 +308,12 @@ details.lj-cut summary {
   display: flex; gap: .55rem; align-items: center;
 }
 .comment .who { font-weight: 700; color: var(--ink); }
-.comment .permalink { margin-left: auto; opacity: .35; text-decoration: none; }
+/* A per-comment anchor, kept so a specific comment can be linked to — but hidden
+   until you're actually on that comment, since a column of "#" is just noise. */
+.comment .permalink { margin-left: auto; opacity: 0; text-decoration: none; transition: opacity .1s; }
+.comment:hover > header > .permalink { opacity: .35; }
 .comment .permalink:hover { opacity: 1; color: var(--rose); }
+.comment .permalink:focus-visible { opacity: 1; }
 .comment .body { margin: .35rem 0 0; }
 .comment h3 { font-family: var(--display); font-size: 1rem; margin: .3rem 0 0; }
 .userpic-sm {
@@ -392,7 +412,10 @@ table.cal td span { display: block; padding: .25rem 0; color: var(--ink-2); opac
  * SEQUENTIAL data, so ONE hue light->dark — never a rainbow. Four steps rather
  * than a gradient, because the eye reads buckets and not interpolation.
  */
-.viz { margin: 0 0 3.5rem; max-width: 62ch; }
+/* Charts fill the content width; the reading-width cap lives on the text rows
+   inside (.bars, .facts, .lede), not on the chart frame. */
+.viz { margin: 0 0 3.5rem; }
+.heat, .hours { width: 100%; }
 .viz h2 { margin: 0 0 .2rem; }
 .viz-note { font-family: var(--meta); font-size: 11px; color: var(--ink-2); margin: 0 0 1rem; }
 .lede { font-size: 1.05rem; max-width: 48ch; margin-bottom: 2.5rem; }
@@ -426,33 +449,40 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
   pointer-events: none; z-index: 5;
 }
 
-.hours { display: flex; align-items: flex-end; gap: 2px; height: 110px; margin: 0; }
-.hour {
-  flex: 1; display: flex; flex-direction: column; justify-content: flex-end;
-  height: 100%; text-decoration: none;
-}
+.hours { display: flex; align-items: flex-end; gap: 2px; height: 120px; margin: 0; }
+.hour { flex: 1; display: flex; align-items: flex-end; height: 100%; text-decoration: none; }
 .hour i {
-  display: block; background: var(--rose); border-radius: 2px 2px 0 0; min-height: 2px;
+  display: block; width: 100%; background: var(--rose);
+  border-radius: 2px 2px 0 0; min-height: 2px;
 }
 .hour:hover i { background: var(--ink); }
-.hour b {
-  font-family: var(--meta); font-size: 9px; font-weight: 400; color: var(--ink-2);
-  text-align: center; padding-top: .2rem; min-height: 1em;
+/* The axis is its OWN row beneath the bars, positioned by percent, so a label
+   sits under the bars instead of looking like it lifts one. The last tick (24)
+   pulls fully left of its point so it closes the right edge; the first sits flush. */
+.hours-axis { position: relative; height: 1.2em; margin-top: .35rem; }
+.hours-axis span {
+  position: absolute; transform: translateX(-50%);
+  font-family: var(--meta); font-size: 9px; color: var(--ink-2);
 }
+/* Every tick centres under its bar; no endpoint tick to special-case. */
 
 .bars { list-style: none; padding: 0; margin: 0; }
-.bars li { display: flex; align-items: center; gap: .6rem; padding: .18rem 0; }
-.bars .k {
-  font-family: var(--meta); font-size: 11px; min-width: 8rem;
-  color: var(--ink); text-decoration: none;
+.bars li { padding: 1px 0; }
+/* The whole row is the target — label, bar and count — like the heatmap cells. */
+.barrow {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .28rem .4rem; margin: 0 -.4rem; border-radius: var(--radius);
+  text-decoration: none;
 }
-a.k:hover { color: var(--rose); }
-a.k:hover + .bar i { background: var(--ink); }
-.bars .bar { flex: 1; height: 12px; background: var(--sunk); border-radius: 2px; }
-.bars .bar i { display: block; height: 100%; background: var(--rose); border-radius: 2px; }
-.bars .v { font-family: var(--meta); font-size: 10px; color: var(--ink-2); min-width: 2.5rem; text-align: right; }
+.barrow:hover { background: var(--sunk); }
+.barrow .k { font-family: var(--meta); font-size: 11px; min-width: 8rem; color: var(--ink); }
+.barrow:hover .k { color: var(--rose); }
+.barrow:hover .bar i { background: var(--ink); }
+.barrow .bar { flex: 1; height: 12px; background: var(--sunk); border-radius: 2px; }
+.barrow .bar i { display: block; height: 100%; background: var(--rose); border-radius: 2px; }
+.barrow .v { font-family: var(--meta); font-size: 10px; color: var(--ink-2); min-width: 2.5rem; text-align: right; }
 
-.facts { list-style: none; padding: 0; margin: 0; }
+.facts { list-style: none; padding: 0; margin: 0; max-width: 52rem; }
 .facts li { padding: .4rem 0; border-bottom: 1px solid var(--rule); font-size: .95rem; }
 .facts b { font-family: var(--display); font-size: 1.15rem; color: var(--rose); }
 .facts a { text-decoration: none; }

@@ -1230,14 +1230,24 @@ export async function buildSite(
       hours: hourCounts.map((n, h) => ({
         pct: Math.round((n / hourPeak) * 100),
         label: `${pad(h)}:00 — ${n} ${n === 1 ? 'entry' : 'entries'}`,
-        tick: h % 6 === 0 ? pad(h) : '',
         href: n > 0 ? rr + hourPath(h) : null,
+      })),
+      // A real axis: ticks every 3 hours from 0 to 24, placed by fraction of the
+      // day so midnight sits under the first bar and 24 closes the right edge.
+      // Military time, 00..21. Not am/pm: the old axis printed "12a" at both 0 and
+      // 24, wrong twice — it's a 24-bar chart of hours 00-23, and there is no 24.
+      // Each tick centres under its bar: bar h spans [h/24, (h+1)/24], middle
+      // (h + 0.5)/24.
+      hourTicks: [0, 3, 6, 9, 12, 15, 18, 21].map((h) => ({
+        label: pad(h),
+        pct: ((h + 0.5) / 24) * 100,
       })),
       moods: moodRows.map((r) => ({
         name: esc(r.name),
         n: r.n,
         pct: Math.round((r.n / moodPeak) * 100),
         href: rr + moodPath(moodSlugFor(r.name)),
+        tip: esc(`${r.n} ${r.n === 1 ? 'entry' : 'entries'} — read them`),
       })),
       moodTotal,
       musicTotal: played.length,
@@ -1246,6 +1256,7 @@ export async function buildSite(
         n: ps.length,
         pct: Math.round((ps.length / artistPeak) * 100),
         href: rr + musicPath(artistSlugFor(key)),
+        tip: esc(`${ps.length} ${ps.length === 1 ? 'entry' : 'entries'} — read them`),
       })),
       artistTotal: num(byArtist.size),
       songTotal: num(songKeys.size),

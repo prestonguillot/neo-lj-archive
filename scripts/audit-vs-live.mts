@@ -345,9 +345,31 @@ async function main(): Promise<void> {
     const renderedWords = new Set(words(renderedHtml));
     const droppedByRenderer = stored.filter((w) => !renderedWords.has(w));
 
-    await page.goto(`https://${USER}.livejournal.com/${r.ditemid}.html`, {
-      waitUntil: 'domcontentloaded',
-    });
+    // Retry, then skip. A single transient network error used to end the whole
+    // run: ERR_NETWORK_CHANGED on one page threw out of the loop and killed a
+    // 400-entry chunk with 1,355 done and 192 to go. Over ~40 minutes of paced
+    // requests a blip is not an edge case, it is a certainty — wifi moves, a VPN
+    // reconnects, a laptop lid dips. The entry that failed simply comes back on
+    // the next chunk, because an entry is only retired once it has a verdict.
+    let loaded = false;
+    for (let attempt = 1; attempt <= 3 && !loaded; attempt++) {
+      try {
+        await page.goto(`https://${USER}.livejournal.com/${r.ditemid}.html`, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30_000,
+        });
+        loaded = true;
+      } catch (err) {
+        const why = err instanceof Error ? err.message.split('\n')[0] : String(err);
+        if (attempt === 3) {
+          console.log(`${String(i + 1).padStart(3)}/${rows.length} ${r.ditemid} SKIPPED — ${why}`);
+        } else {
+          await page.waitForTimeout(3000 * attempt);
+        }
+      }
+    }
+    // No verdict, no state row: it stays unaudited and a later chunk picks it up.
+    if (!loaded) continue;
 
     // Is archive.db complete? Ask div.entry_text — LJ's own name for the body,
     // read off the markup rather than inferred. Every heuristic that guessed at

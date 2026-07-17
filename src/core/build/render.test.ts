@@ -262,6 +262,40 @@ describe('renderBody — emoticons that look like markup', () => {
   });
 });
 
+describe('renderBody — recovered embeds', () => {
+  // catches: a recovered video URL not being shown. The whole point of scraping
+  // the embed URL off the rendered page was to link it; a marker that ignores it
+  // wastes the recovery.
+  it('links an lj-embed to its recovered URL', () => {
+    const html = renderBody(
+      '<lj-embed id="42">',
+      ctx({ embedUrl: () => 'https://www.youtube.com/watch?v=abc' }),
+    );
+    expect(html).toContain('href="https://www.youtube.com/watch?v=abc"');
+  });
+
+  // catches: the ordinal mapping drifting. The Nth lj-embed in the body must get
+  // the Nth recovered URL — off-by-one here attaches the wrong video to a post.
+  it('maps recovered URLs to embeds in document order', () => {
+    const urls = ['https://youtu.be/A', 'https://youtu.be/B'];
+    const html = renderBody(
+      'one <lj-embed id="1"> two <lj-embed id="2">',
+      ctx({ embedUrl: (i) => urls[i] }),
+    );
+    // Both survive, in order, and the prose between them too.
+    expect(html.indexOf('youtu.be/A')).toBeLessThan(html.indexOf('youtu.be/B'));
+    expect(html).toContain('two');
+  });
+
+  // catches: an unrecovered embed still claiming to have a link. 7 of 28 carried
+  // only dead session tokens; those stay plain markers.
+  it('falls back to a plain marker when nothing was recovered', () => {
+    const html = renderBody('<lj-embed id="9">', ctx({ embedUrl: () => undefined }));
+    expect(html).toContain('embedded media');
+    expect(html).not.toContain('<a');
+  });
+});
+
 describe('renderBody — schemeless links', () => {
   // catches: <a href="www.foo.com"> resolving as a RELATIVE path. A 2003 habit:
   // with no scheme the browser resolves it against the current directory, so

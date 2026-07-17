@@ -140,4 +140,38 @@ CREATE TABLE IF NOT EXISTS asset_refs (
 
 CREATE INDEX IF NOT EXISTS asset_refs_hash ON asset_refs (hash);
 CREATE INDEX IF NOT EXISTS asset_refs_host ON asset_refs (host);
+
+-- Userpics (DESIGN.md §3).
+--
+-- Not from the API: LJ's XML-RPC never returns picture_keyword — verified on all
+-- 1,547 entries and on a live single-entry fetch — and the comment export carries
+-- no picid at all. The rendered page has both, so these are scraped.
+--
+-- picid is LJ's own id and the natural key: the same pic reused across 400
+-- comments is one row here and, once downloaded, one blob on disk.
+CREATE TABLE IF NOT EXISTS userpics (
+  picid       INTEGER PRIMARY KEY,
+  userid      INTEGER NOT NULL,
+  url         TEXT NOT NULL,
+  -- Keyword is the AUTHOR'S OWN only: it comes from login's pickws, which
+  -- describes this account's pics and says nothing about other people's.
+  keyword     TEXT,
+  -- Content-addressed, like every other image (§5.2). NULL until fetched.
+  hash        TEXT,
+  fetched_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS userpics_userid ON userpics (userid);
+
+-- Which pic an entry was posted under. Scraped, because the export omits it.
+CREATE TABLE IF NOT EXISTS entry_userpics (
+  ditemid  INTEGER PRIMARY KEY,
+  picid    INTEGER NOT NULL REFERENCES userpics (picid)
+);
+
+-- Which pic a comment was left under. The page's #ljcmt<dtalkid> maps to our
+-- comment id by dtalkid >> 8 — verified 5/5 on a real thread, not assumed.
+CREATE TABLE IF NOT EXISTS comment_userpics (
+  comment_id  INTEGER PRIMARY KEY REFERENCES comments (id),
+  picid       INTEGER NOT NULL REFERENCES userpics (picid)
+);
 `;

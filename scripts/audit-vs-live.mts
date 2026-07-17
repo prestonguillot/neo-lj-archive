@@ -45,6 +45,7 @@ import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { renderBody } from '../src/core/build/render.js';
+import { SCHEMA } from '../src/core/store/schema.js';
 
 /** Live auth state. Gitignored with the rest of archive/, never committed. */
 const SESSION = './archive/session.json';
@@ -82,6 +83,10 @@ const SAMPLE = Number(process.argv[2] ?? 40);
 const PACE_MS = 2000;
 
 const db = new DatabaseSync('./archive/archive.db');
+// This opens sqlite directly rather than through Store, so the schema has to be
+// applied by hand — the userpic tables are new and every statement is
+// CREATE ... IF NOT EXISTS, so this is idempotent on an existing archive.
+db.exec(SCHEMA);
 
 interface Row {
   ditemid: number;
@@ -350,12 +355,68 @@ async function main(): Promise<void> {
     // Record every verdict, so the next chunk starts where this one stopped.
     state[String(r.ditemid)] = { shape: r.shape, gap: liveBody === null ? -1 : gap };
 
-    // The harvest the API won't give us.
-    const pics = await page.$$eval('img', (els) =>
-      els
-        .map((e) => (e as HTMLImageElement).src)
-        .filter((s) => /l-userpic\.livejournal\.com/i.test(s)),
-    );
+    // The harvest the API won't give us, with its mapping intact.
+    //
+    // Scoped, NOT every userpic img on the page. #sidebar carries a
+    // .defaultuserpic that belongs to the journal, not the entry — harvesting it
+    // would stamp the same pic on all 1,547 entries and look entirely plausible.
+    const harvest = await page.evaluate(() => {
+      // NO named function consts in here. tsx/esbuild rewrites `const f = () =>`
+      // into a __name() call for keepNames, and that helper doesn't exist in the
+      // browser, so the callback dies with "__name is not defined". This file
+      // already documents that trap and I walked into it again.
+      const RE = /l-userpic\.livejournal\.com\/(\d+)\/(\d+)/;
+      // '.userpicfriends img', NOT 'img.userpicfriends'. LJ puts this class on the
+      // parent DIV while .userpiccomment sits on the IMG itself — an asymmetry in
+      // their markup that made this match nothing and silently record an entry pic
+      // for zero of 85 entries, while the comment pics kept working perfectly.
+      const entryImg = document.querySelector(
+        '.subcontent .userpicfriends img',
+      ) as HTMLImageElement | null;
+      const em = entryImg ? RE.exec(entryImg.src) : null;
+      const entry =
+        em && entryImg ? { picid: Number(em[1]), userid: Number(em[2]), url: entryImg.src } : null;
+      const comments: { commentId: number; picid: number; userid: number; url: string }[] = [];
+      for (const el of document.querySelectorAll('[id^="ljcmt"]')) {
+        const d = Number(el.id.replace('ljcmt', ''));
+        const img = el.querySelector('img.userpiccomment') as HTMLImageElement | null;
+        if (!Number.isFinite(d) || !img) continue;
+        const m = RE.exec(img.src);
+        if (m)
+          comments.push({
+            commentId: d >> 8,
+            picid: Number(m[1]),
+            userid: Number(m[2]),
+            url: img.src,
+          });
+      }
+      return { entry, comments };
+    });
+    const pics = [
+      ...(harvest.entry ? [harvest.entry.url] : []),
+      ...harvest.comments.map((c) => c.url),
+    ];
+
+    // Persist. A pic reused across 400 comments is ONE row and, later, one blob.
+    for (const u of [...(harvest.entry ? [harvest.entry] : []), ...harvest.comments]) {
+      db.prepare(
+        'INSERT INTO userpics (picid, userid, url) VALUES (?, ?, ?) ON CONFLICT (picid) DO NOTHING',
+      ).run(u.picid, u.userid, u.url);
+    }
+    if (harvest.entry) {
+      db.prepare(
+        'INSERT INTO entry_userpics (ditemid, picid) VALUES (?, ?) ON CONFLICT (ditemid) DO UPDATE SET picid=excluded.picid',
+      ).run(r.ditemid, harvest.entry.picid);
+    }
+    for (const c of harvest.comments) {
+      // Only comments we actually hold — a dtalkid we never fetched would be a
+      // dangling reference, and the FK is there to say so.
+      const known = db.prepare('SELECT 1 AS x FROM comments WHERE id=?').get(c.commentId);
+      if (known)
+        db.prepare(
+          'INSERT INTO comment_userpics (comment_id, picid) VALUES (?, ?) ON CONFLICT (comment_id) DO UPDATE SET picid=excluded.picid',
+        ).run(c.commentId, c.picid);
+    }
     const frames = await page.$$eval('iframe', (els) =>
       els.map((e) => (e as HTMLIFrameElement).src).filter(Boolean),
     );

@@ -165,6 +165,8 @@ const tagPathVia = (slugs: Map<string, string>, tag: string): string =>
 
 const otdPath = (m: number, d: number): string => `onthisday/${pad(m)}-${pad(d)}.html`;
 const monthPath = (y: number, m: number): string => `calendar/${y}/${pad(m)}/index.html`;
+const hourPath = (h: number): string => `hours/${pad(h)}.html`;
+const moodPath = (slug: string): string => `moods/${slug}.html`;
 
 /** How many '../' to get from a page back to the site root. */
 const rootFor = (path: string): string => '../'.repeat(path.split('/').length - 1);
@@ -863,6 +865,109 @@ export async function buildSite(
   }
   report({ kind: 'done', task: 'months', summary: `${monthKeys.length} months` });
 
+  // --- image gallery (§11 M4) -------------------------------------------
+  // Every image that survived, each linking back to the post it came from. The
+  // "203 images" line on Retrospect had nowhere to go; now it goes here.
+  report({ kind: 'start', task: 'images page' });
+  const galleryRows = store.query(
+    `SELECT a.local_path AS pic, r.context AS ctx, r.context_id AS cid, MIN(r.alt_text) AS alt
+       FROM assets a JOIN asset_refs r ON r.hash = a.hash
+      WHERE a.status = 'ok'
+      GROUP BY a.hash ORDER BY r.context_id`,
+  ) as { pic: string; ctx: string; cid: number; alt: string | null }[];
+  const entryForComment = new Map(comments.map((c) => [c.id, c.jitemid]));
+  await page(
+    'images/index.html',
+    'Images',
+    render(T.IMAGES, {
+      root: rootFor('images/index.html'),
+      count: galleryRows.length,
+      lost: imagesLost,
+      images: galleryRows
+        .map((g) => {
+          // An image referenced from a COMMENT belongs to that comment's entry.
+          const itemid = g.ctx === 'comment' ? entryForComment.get(g.cid) : g.cid;
+          const e = itemid === undefined ? undefined : entryByItemid.get(itemid);
+          if (e === undefined) return null;
+          const q = parts(e.eventtime);
+          return {
+            pic: g.pic,
+            href: rootFor('images/index.html') + entryPath(e.ditemid),
+            tip: esc(`${q.y}-${pad(q.m)}-${pad(q.d)} · ${e.subject ?? '(no subject)'}`),
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null),
+    }),
+  );
+  pages++;
+  report({ kind: 'done', task: 'images page', summary: `${galleryRows.length} images` });
+
+  // --- hour and mood slices (§11 M4) ------------------------------------
+  // A stat you cannot click is a dead end. Every bar on Retrospect lands here.
+  report({ kind: 'start', task: 'slices' });
+  for (let h = 0; h < 24; h++) {
+    const mine = entries.filter((e) => Number(parts(e.eventtime).hh) === h);
+    if (mine.length === 0) continue;
+    const rel = hourPath(h);
+    const root = rootFor(rel);
+    await page(
+      rel,
+      `${pad(h)}:00`,
+      render(T.SLICE, {
+        title: `Written between ${pad(h)}:00 and ${pad(h)}:59`,
+        count: mine.length,
+        backHref: root + 'retrospect/index.html',
+        entries: mine
+          .slice()
+          .reverse()
+          .map((e) => {
+            const q = parts(e.eventtime);
+            return {
+              href: root + entryPath(e.ditemid),
+              date: `${q.y}-${pad(q.m)}-${pad(q.d)} ${q.hh}:${q.mm}`,
+              subject: esc(e.subject ?? '(no subject)'),
+            };
+          }),
+      }),
+    );
+    pages++;
+  }
+  const moodOf = (e: EntryRow): string | undefined =>
+    e.mood ?? (e.moodid !== null ? moods.get(e.moodid) : undefined);
+  const moodNames = [
+    ...new Set(entries.map((e) => moodOf(e)).filter((m): m is string => m !== undefined)),
+  ];
+  const moodSlugs = assignSlugs(moodNames.map((m) => m.toLowerCase()));
+  const moodSlugFor = (name: string): string =>
+    moodSlugs.get(name.toLowerCase()) ?? slugify(name.toLowerCase());
+  for (const name of moodNames) {
+    const mine = entries.filter((e) => moodOf(e)?.toLowerCase() === name.toLowerCase());
+    const rel = moodPath(moodSlugFor(name));
+    const root = rootFor(rel);
+    await page(
+      rel,
+      name,
+      render(T.SLICE, {
+        title: `Feeling ${esc(name)}`,
+        count: mine.length,
+        backHref: root + 'retrospect/index.html',
+        entries: mine
+          .slice()
+          .reverse()
+          .map((e) => {
+            const q = parts(e.eventtime);
+            return {
+              href: root + entryPath(e.ditemid),
+              date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
+              subject: esc(e.subject ?? '(no subject)'),
+            };
+          }),
+      }),
+    );
+    pages++;
+  }
+  report({ kind: 'done', task: 'slices', summary: `24 hours, ${moodNames.length} moods` });
+
   // --- retrospect (§11 M4) ----------------------------------------------
   report({ kind: 'start', task: 'retrospect' });
   const hourCounts = Array.from(
@@ -885,20 +990,6 @@ export async function buildSite(
       ) as { n: number }[]
     )[0]?.n ?? 0;
   const moodPeak = Math.max(1, ...moodRows.map((r) => r.n));
-  const deepest = (() => {
-    const byId = new Map(comments.map((c) => [c.id, c]));
-    let best = 0;
-    for (const c of comments) {
-      let d = 1;
-      let p = c.parentid;
-      while (p !== null && p !== undefined) {
-        d++;
-        p = byId.get(p)?.parentid ?? null;
-      }
-      best = Math.max(best, d);
-    }
-    return best;
-  })();
   // Real entries only: the 1984 post is a deliberate backdated joke and would
   // otherwise report this journal as spanning 26 years.
   const realTimes = entries
@@ -917,8 +1008,65 @@ export async function buildSite(
       : 0;
   const privateN = entries.filter((e) => e.security === 'private').length;
 
+  const R = 'retrospect/index.html';
+  const rr = rootFor(R);
+  const dOf = (e: EntryRow): string => {
+    const q = parts(e.eventtime);
+    return `${q.y}-${pad(q.m)}-${pad(q.d)}`;
+  };
+  const words = (b: string): number =>
+    b
+      .replace(/<[^>]*>/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 0).length;
+
+  // Records. Every one links to the thing it describes — a number you can't click
+  // is a dead end, and this page is nothing but numbers.
+  const longestE = entries.reduce((a, b) => (words(b.body) > words(a.body) ? b : a));
+  const commentTally = new Map<number, number>();
+  for (const c of comments) commentTally.set(c.jitemid, (commentTally.get(c.jitemid) ?? 0) + 1);
+  const mostCommented = entries.reduce((a, b) =>
+    (commentTally.get(b.itemid) ?? 0) > (commentTally.get(a.itemid) ?? 0) ? b : a,
+  );
+  // The deepest thread, and WHICH entry it happened in.
+  const deepInfo = (() => {
+    const byId = new Map(comments.map((c) => [c.id, c]));
+    let best = { n: 0, jitemid: 0 };
+    for (const c of comments) {
+      let d = 1;
+      let p2 = c.parentid;
+      while (p2 !== null && p2 !== undefined) {
+        d++;
+        p2 = byId.get(p2)?.parentid ?? null;
+      }
+      if (d > best.n) best = { n: d, jitemid: c.jitemid };
+    }
+    return best;
+  })();
+  const deepEntry = entryByItemid.get(deepInfo.jitemid);
+  const busiestKey = [...byDay.entries()].reduce((a, b) => (b[1].length > a[1].length ? b : a));
+  // The longest silence. Real entries only: the 1984 joke would report a 19-year
+  // gap and be the only thing on this list.
+  const realSorted = entries
+    .filter((e) => e.eventtime > '2000')
+    .map((e) => e.eventtime)
+    .sort();
+  const gap = (() => {
+    let best = { days: 0, at: realSorted[0] ?? '' };
+    for (let i = 1; i < realSorted.length; i++) {
+      const d = Math.round(
+        (Date.parse(realSorted[i]!.replace(' ', 'T') + 'Z') -
+          Date.parse(realSorted[i - 1]!.replace(' ', 'T') + 'Z')) /
+          86_400_000,
+      );
+      if (d > best.days) best = { days: d, at: realSorted[i]! };
+    }
+    return best;
+  })();
+  const gapEntry = entries.find((e) => e.eventtime === gap.at);
+
   await page(
-    'retrospect/index.html',
+    R,
     'Retrospect',
     render(T.RETROSPECT, {
       ...totals,
@@ -928,35 +1076,70 @@ export async function buildSite(
       months: MONTHS.map((m) => m[0]),
       heat: heatRows.map((r) => ({
         ...r,
-        href: rootFor('retrospect/index.html') + yearPath(r.year),
+        href: rr + yearPath(r.year),
         cells: r.cells.map((c, mi) => ({
           ...c,
-          href: byMonth.has(`${r.year}-${pad(mi + 1)}`)
-            ? rootFor('retrospect/index.html') + monthPath(r.year, mi + 1)
-            : null,
+          href: byMonth.has(`${r.year}-${pad(mi + 1)}`) ? rr + monthPath(r.year, mi + 1) : null,
         })),
       })),
       hours: hourCounts.map((n, h) => ({
         pct: Math.round((n / hourPeak) * 100),
         label: `${pad(h)}:00 — ${n} ${n === 1 ? 'entry' : 'entries'}`,
         tick: h % 6 === 0 ? pad(h) : '',
+        href: n > 0 ? rr + hourPath(h) : null,
       })),
       moods: moodRows.map((r) => ({
         name: esc(r.name),
         n: r.n,
         pct: Math.round((r.n / moodPeak) * 100),
+        href: rr + moodPath(moodSlugFor(r.name)),
       })),
       moodTotal,
-      // The single funniest true thing in the data, said plainly.
-      moodNote:
-        (moodRows[0]?.n ?? 0) > moodTotal / 2
-          ? `More than half of them were "${esc(moodRows[0]?.name ?? '')}".`
-          : '',
+      tagTotal: sortedTags.length,
+      tagsHref: rr + 'tags/index.html',
+      taggedEntries: new Set(tagRows.map((t) => t.itemid)).size,
+      longest: {
+        words: words(longestE.body).toLocaleString('en-US'),
+        href: rr + entryPath(longestE.ditemid),
+        date: dOf(longestE),
+      },
+      mostComments: {
+        n: commentTally.get(mostCommented.itemid) ?? 0,
+        href: rr + entryPath(mostCommented.ditemid),
+        date: dOf(mostCommented),
+      },
+      deepest: {
+        n: deepInfo.n,
+        href: deepEntry ? rr + entryPath(deepEntry.ditemid) : rr + 'index.html',
+      },
+      busiest: {
+        n: busiestKey[1].length,
+        date: busiestKey[0],
+        href:
+          rr +
+          dayPath(
+            Number(busiestKey[0].split('-')[0]),
+            Number(busiestKey[0].split('-')[1]),
+            Number(busiestKey[0].split('-')[2]),
+          ),
+      },
+      quietest: {
+        days: gap.days.toLocaleString('en-US'),
+        date: gap.at.slice(0, 10),
+        href: gapEntry ? rr + entryPath(gapEntry.ditemid) : rr + 'index.html',
+      },
       privatePct: Math.round((privateN / Math.max(1, entries.length)) * 100),
-      privateNote: 'They stay private here in name only — this archive gates nothing.',
+      friendsPct: Math.round(
+        (entries.filter((e) => e.security === 'usemask').length / Math.max(1, entries.length)) *
+          100,
+      ),
       imagesKept,
       imagesLost,
-      people: (store.query('SELECT COUNT(*) AS n FROM users') as { n: number }[])[0]?.n ?? 0,
+      imagesHref: rr + 'images/index.html',
+      userpicsHref: rr + 'userpics/index.html',
+      peopleHref: rr + 'people/index.html',
+      anon: anonCount,
+      people: others.length,
       userpicCount:
         (
           store.query('SELECT COUNT(*) AS n FROM userpics WHERE hash IS NOT NULL') as {
@@ -971,7 +1154,6 @@ export async function buildSite(
             n: number;
           }[]
         )[0]?.n ?? 0,
-      deepest,
     }),
   );
   pages++;

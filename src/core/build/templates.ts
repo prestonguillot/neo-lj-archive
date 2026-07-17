@@ -23,44 +23,54 @@ export const LAYOUT = `<!doctype html>
 <link rel="stylesheet" href="<%= root %>style.css">
 </head>
 <body>
-<header class="site">
-  <a class="site-title" href="<%= root %>index.html"><%= journal %></a>
-  <nav>
-    <a href="<%= root %>calendar/index.html">Calendar</a>
-    <a href="<%= root %>tags/index.html">Tags</a>
-  </nav>
-</header>
-<main>
+<div class="shell">
+  <aside class="rail">
+    <a class="site-title" href="<%= root %>index.html"><%= journal %></a>
+    <p class="counts"><%= entryCount %> entries &middot; <%= commentCount %> comments</p>
+    <nav>
+      <a href="<%= root %>index.html">Journal</a>
+      <a href="<%= root %>calendar/index.html">Calendar</a>
+      <a href="<%= root %>tags/index.html">Tags</a>
+    </nav>
+    <p class="rail-heading">Years</p>
+    <ul class="years">
+      <% railYears.forEach(function (y) { %><li><a href="<%= root %>calendar/<%= y %>/index.html"><%= y %></a></li><% }) %>
+    </ul>
+  </aside>
+  <main>
 <%- content %>
-</main>
-<footer class="site">
-  <p>Archived from LiveJournal. <%= entryCount %> entries, <%= commentCount %> comments.</p>
-  <p class="muted">Static HTML. No server, no runtime. It will still open when nothing else does.</p>
-</footer>
+    <footer class="site">
+      <p>Archived from LiveJournal.</p>
+      <p>Static HTML. No server, no runtime. It will still open when nothing else does.</p>
+    </footer>
+  </main>
+</div>
 </body>
 </html>
 `;
 
 export const ENTRY = `
 <article class="entry">
-  <header>
-    <% if (pic) { %><img class="userpic" src="<%= root %><%= pic %>" alt="" loading="lazy"><% } %>
+  <div class="entry-main">
     <p class="date"><a href="<%= dayHref %>"><%= displayDate %></a></p>
     <h1><%= subject %></h1>
+    <div class="body"><%- body %></div>
+  </div>
+
+  <aside class="entry-side">
+    <% if (pic) { %><img class="userpic" src="<%= root %><%= pic %>" alt="" loading="lazy"><% } %>
     <div class="meta">
-      <span class="security security-<%= security %>" title="<%= securityTitle %>"><%= securityLabel %></span>
-      <% if (mood) { %><span class="mood">mood: <b><%= mood %></b></span><% } %>
-      <% if (music) { %><span class="music">music: <b><%= music %></b></span><% } %>
-      <% if (location) { %><span class="location">location: <b><%= location %></b></span><% } %>
+      <span class="security security-<%= security %>" data-k="security" title="<%= securityTitle %>"><b><%= securityLabel %></b></span>
+      <% if (mood) { %><span class="mood" data-k="mood"><b><%= mood %></b></span><% } %>
+      <% if (music) { %><span class="music" data-k="music"><b><%= music %></b></span><% } %>
+      <% if (location) { %><span class="location" data-k="where"><b><%= location %></b></span><% } %>
     </div>
     <% if (tags.length) { %>
     <ul class="tags">
       <% tags.forEach(function (t) { %><li><a href="<%= t.href %>"><%= t.name %></a></li><% }) %>
     </ul>
     <% } %>
-  </header>
-
-  <div class="body"><%- body %></div>
+  </aside>
 </article>
 
 <nav class="spine">

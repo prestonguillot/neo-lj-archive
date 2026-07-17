@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { DEFAULTS, Secret, type Config } from '../core/index.js';
 import { LjClient, BannedError } from '../core/fetch/client.js';
 import { localizeImages } from '../core/images/index.js';
+import { downloadUserpics } from '../core/images/userpics.js';
 import { buildSite } from '../core/build/index.js';
 import { sync } from '../core/fetch/sync.js';
 import { Store } from '../core/store/db.js';
@@ -118,6 +119,31 @@ program
       );
       console.log(`${stats.distinctUrls} distinct URLs from ${stats.refs} references`);
       if (stats.pending > 0) console.log(`${stats.pending} still to try — re-run to resume.`);
+    } finally {
+      store.close();
+    }
+  });
+
+program
+  .command('userpics')
+  .description('Download the userpics the scrape recovered. Deduped by content.')
+  .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
+  .action(async (opts: { out: string }) => {
+    const store = Store.open(opts.out);
+    try {
+      const known = (store.query('SELECT COUNT(*) AS n FROM userpics') as { n: number }[])[0]?.n;
+      if (known === undefined || known === 0) {
+        console.error('No userpics known yet. They are scraped, not fetched from the API:');
+        console.error('  npx tsx scripts/audit-vs-live.mts 200');
+        process.exit(2);
+      }
+      // No credentials: userpics are served publicly and this never talks to
+      // LJ's API. Nothing here needs a session.
+      const stats = await downloadUserpics(opts.out, { store, report: renderProgress() });
+      console.log(
+        `\n${stats.stored}/${stats.known} userpics stored for ${stats.people} people` +
+          (stats.failed > 0 ? `, ${stats.failed} gone` : ''),
+      );
     } finally {
       store.close();
     }

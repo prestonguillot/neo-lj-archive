@@ -7,6 +7,7 @@ import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { renderBody, journalUrl } from './render.js';
+import { resolveAssetUrl } from '../images/extract.js';
 import { STYLE } from './theme.js';
 import * as T from './templates.js';
 import { Store } from '../store/db.js';
@@ -128,6 +129,34 @@ export function assignSlugs(tags: readonly string[]): Map<string, string> {
 
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * Decode HTML entities back to text (for values rendered via EJS <%=, which then
+ * re-escapes them safely).
+ *
+ * 22 comment subjects arrived from LJ already entity-encoded (I&#39;m), and LJ's
+ * "Re:" re-quoting encoded some of them REPEATEDLY (&amp;#39;, &amp;amp;#39;) — so
+ * rendering them straight showed a literal "&#39;" instead of an apostrophe. Decode
+ * to a fixpoint (capped) to unwind the nested re-quotes; entry subjects have none
+ * of this, so this is only applied where it's needed.
+ */
+export function decodeEntities(input: string): string {
+  let prev = '';
+  let out = input;
+  for (let i = 0; i < 6 && out !== prev; i++) {
+    prev = out;
+    out = out
+      .replace(/&#(\d+);/g, (_, d: string) => String.fromCodePoint(Number(d)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => String.fromCodePoint(parseInt(h, 16)))
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&');
+  }
+  return out;
+}
 
 const SECURITY_LABEL: Record<string, string> = {
   public: 'public',
@@ -425,8 +454,8 @@ export async function buildSite(
     write(
       rel,
       render(T.LAYOUT, {
-        title: esc(title),
-        journal: esc(journal),
+        title: title,
+        journal: journal,
         root: rootFor(rel),
         content,
         railYears,
@@ -448,10 +477,15 @@ export async function buildSite(
     const p = parts(e.eventtime);
 
     const entryEmbeds = embedsByEntry.get(e.ditemid) ?? [];
+    // The exact base extraction resolved against: the entry's own permalink.
+    // Comment images use the same base (extraction keys them by the parent
+    // entry's ditemid), and comments render through this same ctx.
+    const base = `https://${config.username}.livejournal.com/${e.ditemid}.html`;
     const ctx = {
       // opt_preformatted: LJ leaves this body's newlines alone, so we must too.
       preformatted: /"opt_preformatted"/.test(e.props_json ?? ''),
       embedUrl: (i: number) => entryEmbeds[i],
+      resolveUrl: (raw: string) => resolveAssetUrl(raw, base),
       localFor: (u: string) => live.get(u),
       deadReason: (u: string) => dead.get(u),
       username: config.username,
@@ -491,7 +525,7 @@ export async function buildSite(
                   : c.state === 'F'
                     ? 'frozen'
                     : '',
-            subject: c.subject ?? '',
+            subject: c.subject !== null ? decodeEntities(c.subject) : '',
             // Deleted comments have no body at all — 217 of them. That is not
             // an empty comment, and rendering it as one would be a lie (§5.1).
             body: c.body !== null ? renderBody(c.body, ctx) : '',
@@ -502,7 +536,7 @@ export async function buildSite(
 
     const moodText = e.mood ?? (e.moodid !== null ? moods.get(e.moodid) : undefined);
     const tags = (tagsByEntry.get(e.itemid) ?? []).map((t) => ({
-      name: esc(t),
+      name: t,
       href: root + tagPathVia(tagSlugs, t),
     }));
     const prevE = entries[i - 1];
@@ -514,7 +548,7 @@ export async function buildSite(
     const content = render(T.ENTRY, {
       root,
       pic: entryPic.get(e.ditemid),
-      subject: esc(e.subject ?? '(no subject)'),
+      subject: e.subject ?? '(no subject)',
       displayDate: `${MONTHS[p.m - 1]} ${p.d}, ${p.y} — ${p.hh}:${p.mm}`,
       dayHref: root + dayPath(p.y, p.m, p.d),
       security: e.security,
@@ -522,13 +556,13 @@ export async function buildSite(
       securityTitle: SECURITY_TITLE[e.security] ?? '',
       // mood and moodid are independent: 307 entries have an id and no text, so
       // resolving through the vocabulary is the only way they render at all (§5.1).
-      mood: moodText !== undefined ? esc(moodText) : '',
-      music: e.music !== null ? esc(e.music) : '',
-      location: e.location !== null ? esc(e.location) : '',
+      mood: moodText !== undefined ? moodText : '',
+      music: e.music !== null ? e.music : '',
+      location: e.location !== null ? e.location : '',
       tags,
       body: renderBody(e.body, ctx),
-      prev: prevE ? { href: root + entryPath(prevE.ditemid), label: esc(label(prevE)) } : null,
-      next: nextE ? { href: root + entryPath(nextE.ditemid), label: esc(label(nextE)) } : null,
+      prev: prevE ? { href: root + entryPath(prevE.ditemid), label: label(prevE) } : null,
+      next: nextE ? { href: root + entryPath(nextE.ditemid), label: label(nextE) } : null,
       commentCount: mine.length,
       comments: renderComments(null),
     });
@@ -629,7 +663,7 @@ export async function buildSite(
         monthName: `${MONTHS[m - 1]} ${y}`,
         entries: dayEntries.map((e) => ({
           href: root + entryPath(e.ditemid),
-          subject: esc(e.subject ?? '(no subject)'),
+          subject: e.subject ?? '(no subject)',
           commentCount: (commentsByEntry.get(e.itemid) ?? []).length,
         })),
       }),
@@ -651,7 +685,7 @@ export async function buildSite(
     'Tags',
     render(T.TAGS, {
       tags: sortedTags.map(([name, count]) => ({
-        name: esc(name),
+        name: name,
         count,
         href: rootFor('tags/index.html') + tagPathVia(tagSlugs, name),
       })),
@@ -667,7 +701,7 @@ export async function buildSite(
       rel,
       `Tagged ${tag}`,
       render(T.TAG, {
-        tag: esc(tag),
+        tag: tag,
         count,
         entries: entries
           .filter((e) => ids.has(e.itemid))
@@ -677,7 +711,7 @@ export async function buildSite(
             return {
               href: root + entryPath(e.ditemid),
               date: `${p.y}-${pad(p.m)}-${pad(p.d)}`,
-              subject: esc(e.subject ?? '(no subject)'),
+              subject: e.subject ?? '(no subject)',
             };
           }),
       }),
@@ -735,7 +769,7 @@ export async function buildSite(
               return {
                 href: root + entryPath(e.ditemid),
                 time: `${p.hh}:${p.mm}`,
-                subject: esc(e.subject ?? '(no subject)'),
+                subject: e.subject ?? '(no subject)',
               };
             }),
           })),
@@ -807,7 +841,7 @@ export async function buildSite(
       total: others.reduce((a, p) => a + p.n, 0),
       anon: anonCount,
       people: others.map((p) => ({
-        name: esc(p.name),
+        name: p.name,
         n: p.n,
         // To the conversations, not to a journal as dead as this one.
         href: rootFor('people/index.html') + personPathVia(p.name),
@@ -833,17 +867,17 @@ export async function buildSite(
       rel,
       p.name,
       render(T.PERSON, {
-        name: esc(p.name),
+        name: p.name,
         n: p.n,
         entryCount: list.length,
         span: spanOf(theirs),
-        ljHref: esc(journalUrl(p.name)),
+        ljHref: journalUrl(p.name),
         entries: list.map((x) => {
           const q = parts(x.e!.eventtime);
           return {
             href: root + entryPath(x.e!.ditemid),
             date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
-            subject: esc(x.e!.subject ?? '(no subject)'),
+            subject: x.e!.subject ?? '(no subject)',
             n: x.n,
           };
         }),
@@ -887,7 +921,7 @@ export async function buildSite(
     render(T.FACES, {
       root: rootFor('userpics/index.html'),
       mine: myPics,
-      others: theirPics.map((t) => ({ ...t, who: esc(t.who) })),
+      others: theirPics.map((t) => ({ ...t, who: t.who })),
     }),
   );
   pages++;
@@ -932,7 +966,7 @@ export async function buildSite(
           return {
             href: root + entryPath(e.ditemid),
             date: `${pad(q.m)}-${pad(q.d)}`,
-            subject: esc(e.subject ?? '(no subject)'),
+            subject: e.subject ?? '(no subject)',
             n: (commentsByEntry.get(e.itemid) ?? []).length,
           };
         }),
@@ -982,7 +1016,7 @@ export async function buildSite(
           return {
             pic: g.pic,
             href: rootFor('images/index.html') + entryPath(e.ditemid),
-            tip: esc(`${q.y}-${pad(q.m)}-${pad(q.d)} · ${e.subject ?? '(no subject)'}`),
+            tip: `${q.y}-${pad(q.m)}-${pad(q.d)} · ${e.subject ?? '(no subject)'}`,
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null),
@@ -1014,7 +1048,7 @@ export async function buildSite(
             return {
               href: root + entryPath(e.ditemid),
               date: `${q.y}-${pad(q.m)}-${pad(q.d)} ${q.hh}:${q.mm}`,
-              subject: esc(e.subject ?? '(no subject)'),
+              subject: e.subject ?? '(no subject)',
             };
           }),
       }),
@@ -1037,7 +1071,7 @@ export async function buildSite(
       rel,
       name,
       render(T.SLICE, {
-        title: `Feeling ${esc(name)}`,
+        title: `Feeling ${name}`,
         count: mine.length,
         backHref: root + 'retrospect/index.html',
         entries: mine
@@ -1048,7 +1082,7 @@ export async function buildSite(
             return {
               href: root + entryPath(e.ditemid),
               date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
-              subject: esc(e.subject ?? '(no subject)'),
+              subject: e.subject ?? '(no subject)',
             };
           }),
       }),
@@ -1092,7 +1126,7 @@ export async function buildSite(
       rel,
       displayName(ps),
       render(T.ARTIST, {
-        name: esc(displayName(ps)),
+        name: displayName(ps),
         count: ps.length,
         songCount: new Set(ps.map((x) => (x.song === null ? '' : musicKey(x.song))).filter(Boolean))
           .size,
@@ -1105,8 +1139,8 @@ export async function buildSite(
             return {
               href: root + entryPath(x.e.ditemid),
               date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
-              subject: esc(x.e.subject ?? '(no subject)'),
-              song: x.song === null ? '' : esc(x.song),
+              subject: x.e.subject ?? '(no subject)',
+              song: x.song === null ? '' : x.song,
             };
           }),
       }),
@@ -1244,20 +1278,20 @@ export async function buildSite(
       // gaps at the end; a label under each bar is uniform by construction.
       hourTicks: Array.from({ length: 24 }, (_, h) => ({ label: pad(h) })),
       moods: moodRows.map((r) => ({
-        name: esc(r.name),
+        name: r.name,
         n: r.n,
         pct: Math.round((r.n / moodPeak) * 100),
         href: rr + moodPath(moodSlugFor(r.name)),
-        tip: esc(`${r.n} ${r.n === 1 ? 'entry' : 'entries'} — read them`),
+        tip: `${r.n} ${r.n === 1 ? 'entry' : 'entries'} — read them`,
       })),
       moodTotal,
       musicTotal: played.length,
       artists: artistTop.map(([key, ps]) => ({
-        name: esc(displayName(ps)),
+        name: displayName(ps),
         n: ps.length,
         pct: Math.round((ps.length / artistPeak) * 100),
         href: rr + musicPath(artistSlugFor(key)),
-        tip: esc(`${ps.length} ${ps.length === 1 ? 'entry' : 'entries'} — read them`),
+        tip: `${ps.length} ${ps.length === 1 ? 'entry' : 'entries'} — read them`,
       })),
       artistTotal: num(byArtist.size),
       songTotal: num(songKeys.size),
@@ -1331,7 +1365,7 @@ export async function buildSite(
     'index.html',
     journal,
     render(T.INDEX, {
-      journal: esc(journal),
+      journal: journal,
       ...totals,
       // A decade at a glance, by month. 2004 has 348 entries and 2010 has 5, and
       // that curve is the story — a grid of year chips says nothing about shape.
@@ -1344,7 +1378,7 @@ export async function buildSite(
           return {
             href: entryPath(e.ditemid),
             date: `${p.y}-${pad(p.m)}-${pad(p.d)}`,
-            subject: esc(e.subject ?? '(no subject)'),
+            subject: e.subject ?? '(no subject)',
           };
         }),
     }),

@@ -64,6 +64,26 @@ describe('renderBody — images', () => {
   });
 });
 
+// catches: an archived image rendered as "lost" because render looked it up by
+// the RAW src while the store is keyed by the NORMALISED url. Six real
+// Photobucket images whose src carries a trailing `"` (extraction stored `%22`)
+// displayed as lost while their blobs sat on disk. resolveUrl must normalise
+// identically before the lookup.
+it('finds a blob when the raw src differs from the normalised key', () => {
+  const raw = 'http://ph.invalid/a.jpg?t=1"';
+  const normalized = new URL(raw, 'https://x.livejournal.com/1.html').href; // ...%22
+  const html = renderBody(
+    `<img src='${raw}'>`,
+    ctx({
+      resolveUrl: (u) => new URL(u, 'https://x.livejournal.com/1.html').href,
+      localFor: (u) => (u === normalized ? 'blobs/aa/bb.jpg' : undefined),
+    }),
+  );
+  // Live image, not a dead-image placeholder.
+  expect(html).toContain('src="../blobs/aa/bb.jpg"');
+  expect(html).not.toContain('dead-image');
+});
+
 describe('renderBody — links (§7.3)', () => {
   // catches: self-references dead-ending. An entry linking to another of the
   // author's own entries should land on the local page, not on a 2005 URL.

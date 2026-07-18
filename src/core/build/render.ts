@@ -23,6 +23,15 @@ export interface RenderContext {
   /** Prefix from this page back to the archive root, e.g. '../'. */
   readonly root: string;
   /**
+   * Normalise a src/href the SAME way extraction did before storing it (resolve
+   * against the entry's permalink, percent-encode, etc). The store is keyed by
+   * the normalised URL; looking up by the raw attribute misses whenever the two
+   * differ — six real Photobucket images whose src carries a trailing `"`
+   * (extraction stored `%22`) were shown as "lost" while their blobs sat on disk.
+   * Optional: without it, lookups use the raw attribute (fine for absolute srcs).
+   */
+  readonly resolveUrl?: (raw: string) => string;
+  /**
    * LJ's opt_preformatted prop: the body is already real HTML, leave its
    * newlines alone. Only 4 of 1,547 entries set it — the other 1,543 rely on LJ
    * turning newlines into breaks at render time.
@@ -308,21 +317,25 @@ export function renderBody(html: string, ctx: RenderContext): string {
     if (tag === 'img') {
       const src = attr(node, 'src');
       if (src !== undefined) {
-        const local = ctx.localFor(src);
+        // Look up by the normalised URL the store was keyed by, not the raw src.
+        const key = ctx.resolveUrl?.(src) ?? src;
+        const local = ctx.localFor(key);
         if (local !== undefined) {
           setAttr(node, 'src', ctx.root + local);
           // Old entries are full of width/height that no longer match, and the
           // layout is ours now, not 2004's.
           setAttr(node, 'loading', 'lazy');
         } else {
-          replace(node, deadImage(src, ctx.deadReason(src), attr(node, 'alt')));
+          // The placeholder still shows the raw src — what the author wrote.
+          replace(node, deadImage(src, ctx.deadReason(key), attr(node, 'alt')));
           return;
         }
       }
     } else if (tag === 'a') {
       const href = attr(node, 'href');
       if (href !== undefined) {
-        const local = IMAGE_EXT.test(href) ? ctx.localFor(href) : undefined;
+        const key = ctx.resolveUrl?.(href) ?? href;
+        const local = IMAGE_EXT.test(href) ? ctx.localFor(key) : undefined;
         if (local !== undefined) {
           setAttr(node, 'href', ctx.root + local);
         } else {

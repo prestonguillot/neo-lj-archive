@@ -63,7 +63,7 @@ const attr = (n: Node, name: string): string | undefined =>
  * 5 of 608 refs in the real corpus are relative or protocol-relative. Without a
  * base they're unfetchable, and dropping them would lose real images.
  */
-function resolve(raw: string, base: string | undefined): string {
+export function resolveAssetUrl(raw: string, base: string | undefined): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
   try {
@@ -89,7 +89,7 @@ export function extract(html: string, entryUrl?: string): Extraction {
       const src = attr(node, 'src');
       if (src?.trim()) {
         images.push({
-          url: resolve(src, entryUrl),
+          url: resolveAssetUrl(src, entryUrl),
           raw: src,
           alt: attr(node, 'alt')?.trim() || undefined,
           kind: 'img',
@@ -101,7 +101,7 @@ export function extract(html: string, entryUrl?: string): Extraction {
       // link; a link to the .jpg is an image we must keep.
       if (href?.trim() && IMAGE_EXT.test(href)) {
         images.push({
-          url: resolve(href, entryUrl),
+          url: resolveAssetUrl(href, entryUrl),
           raw: href,
           alt: undefined,
           kind: 'link',

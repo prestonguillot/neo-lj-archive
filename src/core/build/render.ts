@@ -351,6 +351,9 @@ export function renderBody(html: string, ctx: RenderContext): string {
           // Old entries are full of width/height that no longer match, and the
           // layout is ours now, not 2004's.
           setAttr(node, 'loading', 'lazy');
+          // A missing alt makes a screen reader read the sha256 blob name aloud;
+          // we don't know what the image showed, so "" (skip) is the honest choice.
+          if (attr(node, 'alt') === undefined) setAttr(node, 'alt', '');
         } else {
           // The placeholder still shows the raw src — what the author wrote.
           replace(node, deadImage(src, ctx.deadReason(key), attr(node, 'alt')));
@@ -375,6 +378,10 @@ export function renderBody(html: string, ctx: RenderContext): string {
             const repaired = repairScheme(href);
             if (repaired !== undefined) setAttr(node, 'href', repaired);
           }
+        }
+        // A 2004 target="_blank" opens the opener to the linked page; close it.
+        if (attr(node, 'target')?.toLowerCase() === '_blank' && attr(node, 'rel') === undefined) {
+          setAttr(node, 'rel', 'noopener noreferrer');
         }
       }
     } else if (tag === 'lj') {

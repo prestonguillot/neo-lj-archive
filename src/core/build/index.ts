@@ -140,6 +140,21 @@ const esc = (s: string): string =>
  * to a fixpoint (capped) to unwind the nested re-quotes; entry subjects have none
  * of this, so this is only applied where it's needed.
  */
+/**
+ * A browsable title for an entry: its subject, or a short body excerpt when it
+ * has none. Half the entries are untitled, so the index/month/tag lists were a
+ * column of identical "(no subject)" — honest but unscannable. The excerpt turns
+ * the primary browse surface into something readable.
+ */
+function titleOf(subject: string | null, body: string): string {
+  if (subject !== null && subject.trim() !== '') return subject;
+  const txt = decodeEntities(body.replace(/<[^>]*>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (txt === '') return '(no subject)';
+  return txt.length > 70 ? txt.slice(0, 70).replace(/\s+\S*$/, '') + '\u2026' : txt;
+}
+
 export function decodeEntities(input: string): string {
   let prev = '';
   let out = input;
@@ -548,7 +563,7 @@ export async function buildSite(
     const content = render(T.ENTRY, {
       root,
       pic: entryPic.get(e.ditemid),
-      subject: e.subject ?? '(no subject)',
+      subject: titleOf(e.subject, e.body),
       displayDate: `${MONTHS[p.m - 1]} ${p.d}, ${p.y} — ${p.hh}:${p.mm}`,
       dayHref: root + dayPath(p.y, p.m, p.d),
       security: e.security,
@@ -663,7 +678,7 @@ export async function buildSite(
         monthName: `${MONTHS[m - 1]} ${y}`,
         entries: dayEntries.map((e) => ({
           href: root + entryPath(e.ditemid),
-          subject: e.subject ?? '(no subject)',
+          subject: titleOf(e.subject, e.body),
           commentCount: (commentsByEntry.get(e.itemid) ?? []).length,
         })),
       }),
@@ -711,7 +726,7 @@ export async function buildSite(
             return {
               href: root + entryPath(e.ditemid),
               date: `${p.y}-${pad(p.m)}-${pad(p.d)}`,
-              subject: e.subject ?? '(no subject)',
+              subject: titleOf(e.subject, e.body),
             };
           }),
       }),
@@ -769,7 +784,7 @@ export async function buildSite(
               return {
                 href: root + entryPath(e.ditemid),
                 time: `${p.hh}:${p.mm}`,
-                subject: e.subject ?? '(no subject)',
+                subject: titleOf(e.subject, e.body),
               };
             }),
           })),
@@ -877,7 +892,7 @@ export async function buildSite(
           return {
             href: root + entryPath(x.e!.ditemid),
             date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
-            subject: x.e!.subject ?? '(no subject)',
+            subject: titleOf(x.e!.subject, x.e!.body),
             n: x.n,
           };
         }),
@@ -966,7 +981,7 @@ export async function buildSite(
           return {
             href: root + entryPath(e.ditemid),
             date: `${pad(q.m)}-${pad(q.d)}`,
-            subject: e.subject ?? '(no subject)',
+            subject: titleOf(e.subject, e.body),
             n: (commentsByEntry.get(e.itemid) ?? []).length,
           };
         }),
@@ -1016,7 +1031,7 @@ export async function buildSite(
           return {
             pic: g.pic,
             href: rootFor('images/index.html') + entryPath(e.ditemid),
-            tip: `${q.y}-${pad(q.m)}-${pad(q.d)} · ${e.subject ?? '(no subject)'}`,
+            tip: `${q.y}-${pad(q.m)}-${pad(q.d)} · ${titleOf(e.subject, e.body)}`,
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null),
@@ -1048,7 +1063,7 @@ export async function buildSite(
             return {
               href: root + entryPath(e.ditemid),
               date: `${q.y}-${pad(q.m)}-${pad(q.d)} ${q.hh}:${q.mm}`,
-              subject: e.subject ?? '(no subject)',
+              subject: titleOf(e.subject, e.body),
             };
           }),
       }),
@@ -1082,7 +1097,7 @@ export async function buildSite(
             return {
               href: root + entryPath(e.ditemid),
               date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
-              subject: e.subject ?? '(no subject)',
+              subject: titleOf(e.subject, e.body),
             };
           }),
       }),
@@ -1139,7 +1154,7 @@ export async function buildSite(
             return {
               href: root + entryPath(x.e.ditemid),
               date: `${q.y}-${pad(q.m)}-${pad(q.d)}`,
-              subject: x.e.subject ?? '(no subject)',
+              subject: titleOf(x.e.subject, x.e.body),
               song: x.song === null ? '' : x.song,
             };
           }),
@@ -1378,7 +1393,7 @@ export async function buildSite(
           return {
             href: entryPath(e.ditemid),
             date: `${p.y}-${pad(p.m)}-${pad(p.d)}`,
-            subject: e.subject ?? '(no subject)',
+            subject: titleOf(e.subject, e.body),
           };
         }),
     }),

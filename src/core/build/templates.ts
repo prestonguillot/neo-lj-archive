@@ -341,7 +341,7 @@ export const RETROSPECT = `
     <div class="heat-row">
       <a class="y" href="<%= row.href %>"><%= row.year %></a>
       <span class="heat-cells">
-        <% row.cells.forEach(function (c) { %><% if (c.href) { %><a class="cell" data-n="<%= c.level %>" href="<%= c.href %>" data-tip="<%= c.label %>"></a><% } else { %><i class="cell" data-n="0" data-tip="<%= c.label %>"></i><% } %><% }) %>
+        <% row.cells.forEach(function (c) { %><% if (c.href) { %><a class="cell" data-n="<%= c.level %>" href="<%= c.href %>" data-tip="<%= c.label %>" aria-label="<%= c.label %>"></a><% } else { %><i class="cell" data-n="0" data-tip="<%= c.label %>"></i><% } %><% }) %>
       </span>
       <span class="t"><%= row.total %></span>
     </div>
@@ -359,7 +359,7 @@ export const RETROSPECT = `
   <p class="viz-note">When you wrote, in the time LiveJournal recorded. Click an hour to read it.</p>
   <div class="hours">
     <% hours.forEach(function (h) { %>
-      <% if (h.href) { %><a class="hour" href="<%= h.href %>" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i></a>
+      <% if (h.href) { %><a class="hour" href="<%= h.href %>" data-tip="<%= h.label %>" aria-label="<%= h.label %>"><i style="height: <%= h.pct %>%"></i></a>
       <% } else { %><span class="hour" data-tip="<%= h.label %>"><i style="height: <%= h.pct %>%"></i></span><% } %>
     <% }) %>
   </div>

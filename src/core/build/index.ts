@@ -206,7 +206,7 @@ const otdPath = (m: number, d: number): string => `onthisday/${pad(m)}-${pad(d)}
  * hyphens far more often than artist names do), and anything unseparated is
  * treated as an artist rather than thrown away.
  */
-function splitMusic(raw: string): { artist: string; song: string | null } {
+export function splitMusic(raw: string): { artist: string; song: string | null } {
   const i = raw.indexOf(' - ');
   if (i > 0) return { artist: raw.slice(0, i).trim(), song: raw.slice(i + 3).trim() || null };
   const by = / by /i.exec(raw);
@@ -225,7 +225,7 @@ function splitMusic(raw: string): { artist: string; song: string | null } {
  * differently across seven years. Normalising for the count is what makes the
  * number true; the page still shows the spelling the author actually used.
  */
-function musicKey(s: string): string {
+export function musicKey(s: string): string {
   return (
     s
       .toLowerCase()

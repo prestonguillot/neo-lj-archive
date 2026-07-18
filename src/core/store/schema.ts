@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS entries (
 );
 
 CREATE INDEX IF NOT EXISTS entries_eventtime ON entries (eventtime);
-CREATE INDEX IF NOT EXISTS entries_ditemid ON entries (ditemid);
+-- UNIQUE: ditemid is logically unique and joined on throughout (userpics,
+-- embeds, the build). A duplicate would silently multiply those joins; this makes
+-- it an error instead. Applies on reopen; the data is already 1-to-1.
+CREATE UNIQUE INDEX IF NOT EXISTS entries_ditemid ON entries (ditemid);
 
 CREATE TABLE IF NOT EXISTS entry_tags (
   itemid INTEGER NOT NULL REFERENCES entries (itemid) ON DELETE CASCADE,

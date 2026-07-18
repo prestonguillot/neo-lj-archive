@@ -8,7 +8,7 @@
  * images. Preston found it in a minute by opening the live page. LiveJournal is
  * the only oracle here that doesn't share the author's blind spots.
  *
- * TWO of the three things here work. The third does not, and is disabled.
+ * All three of these work — text parity, structure parity, and the harvest.
  *
  *   WORKS  Harvest the userpics and embed URLs the XML-RPC API refuses to give
  *          up — per-entry AND per-comment, keyed by picid/userid. Verified

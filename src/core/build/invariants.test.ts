@@ -211,3 +211,42 @@ describe('invariant: a newline is a line break', () => {
     expect(out).toContain('<br>');
   });
 });
+
+/**
+ * Third-party content cannot execute (DESIGN.md §8).
+ *
+ * renderBody serializes commenter-supplied HTML into the generated page. LJ
+ * scrubbed comments so this corpus is clean, but the archive is offline HTML that
+ * may one day be hosted — at which point an un-neutralized script tag, on-handler,
+ * or javascript: URL from a 2005 comment is stored XSS. Two review agents flagged
+ * that no sanitizer existed; this is the invariant that keeps one.
+ */
+describe('invariant: rendered bodies carry no executable content', () => {
+  // catches: any active-content vector surviving the transform. Not a list of the
+  // three I fixed — a rule the output must satisfy for ANY input.
+  it.each([
+    '<script>alert(1)</script>',
+    '<img src=x onerror="alert(1)">',
+    '<a href="javascript:alert(1)">x</a>',
+    '<div onclick="alert(1)">x</div>',
+    '<style>body{x:url(javascript:alert(1))}</style>',
+    '<a href="JavaScript:alert(1)">x</a>',
+    '<svg onload="alert(1)">',
+  ])('neutralizes %s', (evil) => {
+    const out = renderBody(`before ${evil} after`, ctx());
+    expect(out).not.toMatch(/<script[\s>]/i);
+    expect(out).not.toMatch(/<style[\s>]/i);
+    expect(out).not.toMatch(/\son[a-z]+\s*=/i);
+    expect(out).not.toMatch(/javascript:/i);
+  });
+
+  // catches: sanitization degrading into "strip everything". The surrounding
+  // prose and a benign link must survive.
+  it('keeps benign content and links intact', () => {
+    const out = renderBody('hi <a href="http://ok.example/x">link</a> bye', ctx());
+    expect(text(out)).toContain('hi');
+    expect(text(out)).toContain('bye');
+    expect(out).toContain('href="http://ok.example/x"');
+    expect(out).toContain('link');
+  });
+});

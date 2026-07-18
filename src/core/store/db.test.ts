@@ -1,4 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { Store } from './db.js';
 import { parseCommentBody, parseCommentMeta, parseEvents } from '../fetch/parse.js';
@@ -170,5 +174,62 @@ describe('Store — sync state', () => {
     expect(s.getState('comments.startid')).toBe('1000');
     s.setState('comments.startid', '2000');
     expect(s.getState('comments.startid')).toBe('2000');
+  });
+});
+
+/**
+ * Migration (DESIGN.md §10). CREATE TABLE IF NOT EXISTS never changes a live
+ * table's shape, so a column added later never reaches an existing archive.db and
+ * the first query dies with "no such column" — the defect migrate() exists to
+ * stop, named in its own comment. That sentence is the test spec.
+ */
+describe('migrate: additive columns reach a pre-existing table', () => {
+  const withOldDb = (fn: (dir: string) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), 'neolj-mig-'));
+    // Materialize an archive.db whose entry_embeds predates thumb_hash/fetched_at.
+    const raw = new DatabaseSync(join(dir, 'archive.db'));
+    raw.exec(
+      'CREATE TABLE entry_embeds (ditemid INTEGER NOT NULL, idx INTEGER NOT NULL, url TEXT NOT NULL, PRIMARY KEY (ditemid, idx))',
+    );
+    raw.exec("INSERT INTO entry_embeds (ditemid, idx, url) VALUES (1, 0, 'http://x/')");
+    raw.close();
+    try {
+      fn(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  // catches: migrate() failing to add a column to an existing table — the exact
+  // "no such column: thumb_hash" that shipped and broke video-posters on a real db.
+  it('adds thumb_hash to an old entry_embeds so a query using it works', () => {
+    withOldDb((dir) => {
+      const store = Store.open(dir); // runs SCHEMA (no-op here) then migrate()
+      // Would throw "no such column: thumb_hash" if migrate did nothing.
+      const rows = store.query('SELECT thumb_hash FROM entry_embeds') as {
+        thumb_hash: string | null;
+      }[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.thumb_hash).toBeNull();
+      store.close();
+    });
+  });
+
+  // catches: migrate() dropping the row's existing data while adding the column.
+  it('preserves existing rows through the migration', () => {
+    withOldDb((dir) => {
+      const store = Store.open(dir);
+      const rows = store.query('SELECT url FROM entry_embeds') as { url: string }[];
+      expect(rows[0]?.url).toBe('http://x/');
+      store.close();
+    });
+  });
+
+  it('is idempotent — reopening a migrated db does not fail', () => {
+    withOldDb((dir) => {
+      Store.open(dir).close();
+      // Second open must not throw "duplicate column name".
+      expect(() => Store.open(dir).close()).not.toThrow();
+    });
   });
 });

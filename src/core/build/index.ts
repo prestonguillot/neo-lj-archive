@@ -131,16 +131,6 @@ const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
- * Decode HTML entities back to text (for values rendered via EJS <%=, which then
- * re-escapes them safely).
- *
- * 22 comment subjects arrived from LJ already entity-encoded (I&#39;m), and LJ's
- * "Re:" re-quoting encoded some of them REPEATEDLY (&amp;#39;, &amp;amp;#39;) — so
- * rendering them straight showed a literal "&#39;" instead of an apostrophe. Decode
- * to a fixpoint (capped) to unwind the nested re-quotes; entry subjects have none
- * of this, so this is only applied where it's needed.
- */
-/**
  * A browsable title for an entry: its subject, or a short body excerpt when it
  * has none. Half the entries are untitled, so the index/month/tag lists were a
  * column of identical "(no subject)" — honest but unscannable. The excerpt turns
@@ -154,6 +144,17 @@ function titleOf(subject: string | null, body: string): string {
   if (txt === '') return '(no subject)';
   return txt.length > 70 ? txt.slice(0, 70).replace(/\s+\S*$/, '') + '\u2026' : txt;
 }
+
+/**
+ * Decode HTML entities back to text (for values rendered via EJS <%=, which then
+ * re-escapes them safely).
+ *
+ * 22 comment subjects arrived from LJ already entity-encoded (I&#39;m), and LJ's
+ * "Re:" re-quoting encoded some of them REPEATEDLY (&amp;#39;, &amp;amp;#39;) — so
+ * rendering them straight showed a literal "&#39;" instead of an apostrophe. Decode
+ * to a fixpoint (capped) to unwind the nested re-quotes; entry subjects have none
+ * of this, so this is only applied where it's needed.
+ */
 
 export function decodeEntities(input: string): string {
   let prev = '';
@@ -355,6 +356,15 @@ export async function buildSite(
     id: number;
   }[];
   const myId = meRow[0]?.id ?? -1;
+  if (myId === -1) {
+    // Not fatal (the author may never have commented on their own journal), but
+    // it silently empties the userpic gallery's "yours" and lists the author as
+    // one of the People — so say so rather than let it pass unnoticed.
+    report({
+      kind: 'warn',
+      message: `username "${config.username}" matches no commenter — "your" userpics and People may be off`,
+    });
+  }
 
   // Hoisted: Retrospect reports these and it builds before the index does.
   //
@@ -900,7 +910,7 @@ export async function buildSite(
     );
     pages++;
   }
-  report({ kind: 'done', task: 'people', summary: `${perPerson.length} people` });
+  report({ kind: 'done', task: 'people', summary: `${others.length} people` });
 
   // --- userpic gallery (§11 M4) -----------------------------------------
   report({ kind: 'start', task: 'faces' });

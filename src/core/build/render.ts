@@ -314,6 +314,32 @@ export function renderBody(html: string, ctx: RenderContext): string {
     const children = [...(node.childNodes ?? [])];
     const tag = node.tagName?.toLowerCase();
 
+    // Sanitize third-party content BEFORE any other handling (§8). LJ scrubbed
+    // comments and the owner injected nothing, so the corpus is clean today — but
+    // renderBody serializes commenter-supplied HTML into the page, and the moment
+    // the archive is served over HTTP that is stored XSS. parse5 already gives us
+    // the tree; neutralize it here rather than trust the input.
+    if (tag === 'script' || tag === 'style') {
+      // Executable/leaky content with no reader value once the video/CSS is gone.
+      replaceWith(node, []);
+      return;
+    }
+    if (node.attrs !== undefined) {
+      node.attrs = node.attrs.filter((a) => {
+        const name = a.name.toLowerCase();
+        // Event handlers (onclick, onerror, …) are script; drop them.
+        if (name.startsWith('on')) return false;
+        // A javascript: URL in href/src/action executes on click/load.
+        if (
+          (name === 'href' || name === 'src' || name === 'action') &&
+          /^\s*javascript:/i.test(a.value)
+        ) {
+          return false;
+        }
+        return true;
+      });
+    }
+
     if (tag === 'img') {
       const src = attr(node, 'src');
       if (src !== undefined) {

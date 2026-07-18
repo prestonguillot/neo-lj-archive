@@ -76,6 +76,10 @@ export const STYLE = `
     --rail-bg: #080a0e;
     --rail-hover: #1c212b;
   }
+  /* The lowest heat bucket is nearly invisible over the dark --sunk; lift its
+     rose mix so "darker is more" keeps all four steps in dark mode. */
+  .cell[data-n='1'] { background: color-mix(in srgb, var(--rose) 42%, var(--sunk)); }
+  .cell[data-n='2'] { background: color-mix(in srgb, var(--rose) 68%, var(--sunk)); }
 }
 
 * { box-sizing: border-box; }
@@ -120,7 +124,7 @@ img { max-width: 100%; height: auto; }
 .rail .counts { color: var(--rail-dim); margin: 0 0 1.5rem; font-size: 11px; }
 .rail nav { display: flex; flex-direction: column; gap: .1rem; margin-bottom: 1.5rem; }
 .rail nav a {
-  text-decoration: none; color: var(--rail-fg); padding: .28rem .45rem;
+  text-decoration: none; color: var(--rail-fg); padding: .28rem .45rem; white-space: nowrap;
   border-radius: var(--radius); text-transform: uppercase; letter-spacing: .1em;
   border-left: 2px solid transparent;
 }
@@ -164,6 +168,8 @@ main { padding: 2.5rem 3rem 5rem; max-width: 100rem; }
  */
 @media (max-width: 44rem) {
   .shell { grid-template-columns: 1fr; }
+  .replies { margin-left: .4rem; padding-left: .55rem; }
+  .replies .replies .replies .replies { margin-left: 0; padding-left: 0; border-left: 0; }
   .rail {
     position: static; height: auto; overflow: visible;
     padding: .6rem .85rem;
@@ -327,6 +333,11 @@ details.lj-cut summary {
 /* Real nesting, and the rose keeps deep threads legible as threads. */
 .replies { margin-left: 1.1rem; padding-left: 1.15rem; border-left: 2px solid var(--rule); }
 .replies .replies { border-left-color: var(--sunk); }
+/* Cap the visual indent: past 6 levels the border alone carries the thread, so a
+   27-deep thread doesn't collapse the text column. */
+.replies .replies .replies .replies .replies .replies {
+  margin-left: 0; padding-left: 0; border-left: 0;
+}
 .comment-D .body, .comment-D .who { color: var(--ink-2); font-style: italic; }
 .state {
   border: 1px solid var(--rule); border-radius: var(--radius);
@@ -360,8 +371,9 @@ table.cal { border-collapse: collapse; width: 100%; font-family: var(--meta); fo
 table.cal th { color: var(--ink-2); font-weight: 400; padding: .2rem 0; opacity: .6; }
 table.cal td { text-align: center; padding: .08rem; }
 table.cal td a {
-  display: block; padding: .25rem 0; background: var(--sunk); color: var(--ink);
-  border-radius: var(--radius); text-decoration: none;
+  display: block; padding: .25rem 0; color: var(--ink);
+  background: color-mix(in srgb, var(--rose) 28%, var(--sunk));
+  border-radius: var(--radius); text-decoration: none; font-weight: 600;
 }
 table.cal td a:hover { background: var(--rose); color: #fff; }
 table.cal td span { display: block; padding: .25rem 0; color: var(--ink-2); opacity: .3; }
@@ -386,11 +398,14 @@ table.cal td span { display: block; padding: .25rem 0; color: var(--ink-2); opac
   border-bottom: 1px solid var(--rule); padding-bottom: .3rem; margin-bottom: .2rem;
 }
 
-.people { list-style: none; padding: 0; margin: 0; max-width: 62ch; }
+.people { list-style: none; padding: 0; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .1rem .75rem; }
 .people li {
+  min-width: 0;
   display: flex; align-items: center; gap: .65rem;
   padding: .35rem 0; border-bottom: 1px solid var(--rule);
 }
+.people .span { font-family: var(--meta); font-size: 10px; color: var(--ink-2); white-space: nowrap; }
 .people .n { margin-left: auto; font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
 .userpic-sm.nopic { background: var(--sunk); border: 1px dashed var(--rule); }
 
@@ -443,7 +458,8 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
 /* Hover says something. CSS only — a tooltip that needs JS is a tooltip that
    eventually isn't there. */
 [data-tip] { position: relative; }
-[data-tip]:hover::after {
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
   content: attr(data-tip);
   position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
   background: var(--ink); color: var(--paper);
@@ -499,7 +515,8 @@ a.cell:hover { outline: 2px solid var(--ink); outline-offset: 1px; }
   border: 1px solid var(--rule); border-radius: var(--radius); background: var(--card);
 }
 .img-grid a:hover img { outline: 2px solid var(--rose); outline-offset: 1px; border-color: var(--rose); }
-.years, .tag-cloud, .year-grid, .months { max-width: 62ch; }
+/* Grids and directories fill the width; only the reading list (.entry-list,
+   date + title rows) keeps a measure. The 62ch cap here left ~49% dead. */
 .years h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; }
 
 `;

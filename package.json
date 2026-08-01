@@ -23,7 +23,7 @@
     "ejs": "^6.0.1",
     "fast-xml-parser": "^5.10.1",
     "parse5": "^8.0.1",
-    "undici": "^8.7.0"
+    "undici": "^8.9.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

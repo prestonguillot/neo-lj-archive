@@ -12,8 +12,8 @@ import { DEFAULTS, type Config } from '../config.js';
  * years rather than a contiguous slice (DESIGN.md §10).
  *
  * That property is the whole point. An earlier version of syncEntries advanced
- * by the page's newest logtime, which on real data jumped to 2010 on page one
- * and terminated after 240 of ~1,500 entries — reporting success. Sixty-four
+ * by the page's newest logtime, which on real data jumped to the newest page at
+ * once and terminated after a sixth of the entries — reporting success. Sixty-four
  * tests were green at the time, because they all replayed a single page. Only
  * running it caught that, so this is the test that would have.
  */
@@ -50,9 +50,11 @@ const config = (): Config => ({
  * beforedate filters on — not logtime. Using the logtime boundary here made the
  * stub hand back page one forever and failed correct code:
  *
- *   no beforedate           -> 2010 page (eventtime 2009-08-28 .. 2010-09-07)
- *   before > 2009-08-28 ... -> still inside that page's range, so LJ returns it again
- *   before > 2004-05-09 ... -> the 2004 page (eventtime 2004-05-09 .. 2004-05-30)
+ *   no beforedate             -> newest page (eventtime 2013-10-02 .. 2014-10-12)
+ *   before > 2013-10-02 ...   -> still inside that page's range, so LJ returns it again
+ *   before > 2008-06-13 ...   -> the older page (eventtime 2008-06-13 .. 2008-07-05)
+ *
+ * (Fixture dates are shifted by a constant secret offset; ids are remapped.)
  *   older                   -> empty
  */
 function stubFetch(): { impl: typeof fetch; eventCalls: () => string[] } {
@@ -79,13 +81,15 @@ function stubFetch(): { impl: typeof fetch; eventCalls: () => string[] } {
       eventCalls.push(before ?? '(none)');
       // Model beforedate the way LJ does: return the newest page whose entries
       // actually precede the requested date. An earlier stub returned page two
-      // for ANY beforedate past 2005, which meant a walk that wrongly jumped
-      // FORWARD to 2010 still got handed page two and looked healthy. A stub
+      // for ANY beforedate after the older page, which meant a walk that wrongly
+      // jumped FORWARD to the newest page still got handed page two and looked
+      // healthy. A stub
       // that can't say no can't catch the bug it exists for.
       if (before === undefined) return new Response(fixture('getevents-lastn.xml'));
-      // Still inside the 2010 page's own range -> LJ hands back that same page.
-      if (before > '2009-08-28 09:44:00') return new Response(fixture('getevents-lastn.xml'));
-      if (before > '2004-05-09 01:32:00') return new Response(fixture('getevents-2004.xml'));
+      // Each boundary is that page's OLDEST eventtime, read off the fixture.
+      // Still inside the newest page's own range -> LJ hands back that same page.
+      if (before > '2013-10-02 15:10:11') return new Response(fixture('getevents-lastn.xml'));
+      if (before > '2008-06-13 06:58:11') return new Response(fixture('getevents-older.xml'));
       return new Response(EMPTY_EVENTS);
     }
 
@@ -130,8 +134,8 @@ describe('sync — entry paging (§5.1)', () => {
     await sync(h.config, h.deps);
     const calls = h.calls();
     expect(calls[0]).toBe('(none)');
-    // The 2010 page's oldest eventtime — not its newest (2010-09-07).
-    expect(calls[1]).toMatch(/^2009-/);
+    // The newest page's oldest eventtime — not its newest (2014-10-12).
+    expect(calls[1]).toBe('2013-10-02 15:10:11');
   });
 
   // catches: an infinite loop when a page yields nothing new — a boundary where

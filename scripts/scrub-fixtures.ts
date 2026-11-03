@@ -7,12 +7,14 @@
  *
  * What survives is exactly what the parser is tested against and nothing else:
  * element nesting, attribute quoting, which attributes are present or omitted,
- * ids, dates, security levels, comment states, base64 encoding. LiveJournal
- * authored all of that in 2005 — we're not inventing an oracle, we're redacting
- * the prose inside one (DESIGN.md §10).
+ * security levels, comment states, base64 encoding, and the SHAPE of the ids and
+ * dates — their order, their gaps, how they cross-reference. LiveJournal authored
+ * all of that — we're not inventing an oracle, we're redacting the prose inside
+ * one (DESIGN.md §10).
  *
  * What does NOT survive: entry text, subjects, comment text, usernames, moods,
- * music, locations, tags, URLs. Anything a human wrote.
+ * music, locations, tags, URLs — anything a human wrote — nor the real ids,
+ * dates, user ids, or community names, which are remapped (see remapIds).
  *
  * This fails CLOSED. A verification pass re-reads the output and aborts if any
  * scrubbed value leaks through. Scrub bugs must not become publications.
@@ -21,6 +23,8 @@
  */
 
 import { readdir, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { redactHtml } from './scrub-html.js';
 
 const RAW = new URL('../fixtures-raw/', import.meta.url);
@@ -162,11 +166,176 @@ function scrubChallenge(xml: string): string {
   return redactMember(xml, 'challenge', 'c0:1234567890:123:60:redacted:0000000000000000');
 }
 
+// --- ids and times: the journal's skeleton --------------------------------
+//
+// Redaction removes the words but kept every id and timestamp, by design, because
+// the parser is tested against them. Those are still the journal's skeleton —
+// which entries exist, when they were posted, who replied to whom, the author's
+// own user id, the communities joined — and the repo is public. So every one is
+// REMAPPED, consistently across files, keeping what the tests need:
+//
+//   entry and comment ids  -> invented ids in the SAME ORDER (sync pages by id),
+//                             in ranges no real id can occupy
+//   ditemid                -> new itemid * 256 + anum, exactly as LJ derives it
+//   user ids               -> a counter, like usernames (no function from real)
+//   every timestamp        -> shifted by one constant offset, every format
+//   community names        -> community1, community2, …
+//
+// The offset and the gaps between ids come from a secret in fixtures-raw/
+// (gitignored, created on first run), so re-scrubbing is reproducible on this
+// machine and nothing in the repo can undo it.
+
+const SECRET_FILE = new URL('.remap-secret', RAW);
+
+function secret(): Buffer {
+  if (!existsSync(SECRET_FILE)) writeFileSync(SECRET_FILE, randomBytes(32).toString('hex'));
+  return createHash('sha256').update(readFileSync(SECRET_FILE, 'utf8')).digest();
+}
+
+/** A small deterministic PRNG (mulberry32), seeded from the secret. */
+function prng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Order-preserving: sorted real ids -> base + cumulative random gaps of 1..5. */
+function orderedMap(real: Iterable<number>, base: number, rand: () => number): Map<number, number> {
+  const out = new Map<number, number>();
+  let next = base;
+  for (const id of [...new Set(real)].sort((a, b) => a - b)) {
+    next += 1 + Math.floor(rand() * 5);
+    out.set(id, next);
+  }
+  return out;
+}
+
+interface Remap {
+  readonly files: Map<string, string>;
+  /** Real values that must not survive anywhere in the output (verified below). */
+  readonly real: { ids: Set<string>; times: Set<string>; names: Set<string> };
+}
+
+const NEW_ITEM_BASE = 20_000; // real itemids are < 2,000; ditemids < 500,000
+const NEW_COMMENT_BASE = 100_000; // real comment ids are < 10,000
+const NEW_USER_BASE = 90_000_000; // real LJ user ids are 7–8 digits, all below this
+
+function remapIds(files: Map<string, string>): Remap {
+  const key = secret();
+  const rand = prng(key.readUInt32LE(0));
+  // 2–5 years and some hours: dates stay plausible for LJ, and the real ones are
+  // not recoverable without the secret.
+  const offset = 730 * 86400 + Math.floor(prng(key.readUInt32LE(4))() * 3 * 365 * 86400);
+
+  const all = [...files.values()].join('\n');
+  const ints = (re: RegExp): number[] => [...all.matchAll(re)].map((m) => Number(m[1]));
+  const member = (name: string): RegExp =>
+    new RegExp(`<name>${name}</name><value><int>(\\d+)</int>`, 'g');
+
+  const itemIds = orderedMap(
+    [...ints(member('itemid')), ...ints(/jitemid='(\d+)'/g)],
+    NEW_ITEM_BASE,
+    rand,
+  );
+  const commentIds = orderedMap(
+    [
+      ...ints(/<comment id='(\d+)'/g),
+      ...ints(/parentid='(\d+)'/g),
+      ...ints(/<maxid>(\d+)<\/maxid>/g),
+    ],
+    NEW_COMMENT_BASE,
+    rand,
+  );
+  const users = new Map<number, number>();
+  const userOf = (id: number): number => {
+    if (!users.has(id)) users.set(id, NEW_USER_BASE + users.size + 1);
+    return users.get(id)!;
+  };
+  const communities = new Map<string, string>();
+
+  const real = { ids: new Set<string>(), times: new Set<string>(), names: new Set<string>() };
+  const shiftDate = (y: string, sep: string, rest: string, z: string): string => {
+    const d = new Date(`${y}T${rest}Z`);
+    const shifted = new Date(d.getTime() + offset * 1000).toISOString().slice(0, 19);
+    real.times.add(`${y}${sep}${rest}`);
+    return `${shifted.slice(0, 10)}${sep}${shifted.slice(11)}${z}`;
+  };
+
+  const out = new Map<string, string>();
+  for (const [f, xml0] of files) {
+    let xml = xml0;
+    const swap = (re: RegExp, map: (n: number) => number): void => {
+      xml = xml.replace(re, (m: string, n: string) => {
+        real.ids.add(n);
+        return m.replace(n, String(map(Number(n))));
+      });
+    };
+    const need =
+      (m: Map<number, number>) =>
+      (n: number): number => {
+        const v = m.get(n);
+        if (v === undefined) throw new Error(`unmapped id ${n} in ${f}`);
+        return v;
+      };
+
+    // Entries. A ditemid IS itemid * 256 + anum (LJ's own encoding), so it maps
+    // from its own value: same anum, new itemid. Not by finding the itemid in the
+    // same <struct> — an event nests a props struct, so a struct-scoped search
+    // stopped short of ditemid and left 29 of 40 real ones in place, which the
+    // first version of the check below didn't catch.
+    swap(
+      /<name>ditemid<\/name><value><int>(\d+)<\/int>/g,
+      (d) => need(itemIds)(d >> 8) * 256 + (d & 255),
+    );
+    swap(/<name>itemid<\/name><value><int>(\d+)<\/int>/g, need(itemIds));
+    swap(/jitemid='(\d+)'/g, need(itemIds));
+    // Comments.
+    swap(/<comment id='(\d+)'/g, need(commentIds));
+    swap(/parentid='(\d+)'/g, need(commentIds));
+    swap(/<maxid>(\d+)<\/maxid>/g, need(commentIds));
+    // People, including the author.
+    swap(/posterid='(\d+)'/g, userOf);
+    swap(/<usermap id='(\d+)'/g, userOf);
+    swap(/<name>userid<\/name><value><int>(\d+)<\/int>/g, userOf);
+    // Communities the author could post to, by name.
+    xml = xml.replace(
+      /(<name>usejournals<\/name><value><array><data>)([\s\S]*?)(<\/data>)/,
+      (_m, a: string, list: string, b: string) =>
+        a +
+        list.replace(/<string>([^<]*)<\/string>/g, (_s, name: string) => {
+          real.names.add(name);
+          if (!communities.has(name)) communities.set(name, `community${communities.size + 1}`);
+          return `<string>${communities.get(name)}</string>`;
+        }) +
+        b,
+    );
+    // LJ's guess at the journal's interests.
+    xml = redactMember(xml, 'verticals_list', 'redacted');
+    // Every timestamp, in every format it appears in.
+    xml = xml.replace(
+      /(\d{4}-\d{2}-\d{2})([ T])(\d{2}:\d{2}:\d{2})(Z?)/g,
+      (_m, y: string, sep: string, rest: string, z: string) => shiftDate(y, sep, rest, z),
+    );
+    // Unix times: 10 digits in 2001–2033. No id is that long (all ranges above).
+    xml = xml.replace(/(?<![\d.])(1\d{9})(?!\d)/g, (n: string) => {
+      real.times.add(n);
+      return String(Number(n) + offset);
+    });
+    out.set(f, xml);
+  }
+  return { files: out, real };
+}
+
 const SCRUBBERS: Record<string, (xml: string) => string> = {
   'export-comment-meta.xml': scrubComments,
   'export-comment-body.xml': scrubComments,
   'getevents-lastn.xml': scrubEvents,
-  'getevents-2004.xml': scrubEvents,
+  'getevents-2004.xml': scrubEvents, // published as getevents-older.xml
   'login.xml': scrubLogin,
   'getchallenge.xml': scrubChallenge,
 };
@@ -201,6 +370,10 @@ async function main(): Promise<void> {
       `  scrubbed  ${f}  ${raw.length.toLocaleString()} → ${clean.length.toLocaleString()} bytes`,
     );
   }
+
+  // Ids and times, across all files at once so cross-references stay consistent.
+  const remapped = remapIds(scrubbed);
+  for (const [f, xml] of remapped.files) scrubbed.set(f, xml);
 
   const written = [...scrubbed.keys()];
 
@@ -290,10 +463,57 @@ async function main(): Promise<void> {
       }
     }
   }
+  // --- Pass 3: the skeleton. No real id, time, or community survived the remap.
+  //
+  // Checked on the id-bearing FIELDS, not as bare numbers: real comment ids are
+  // small integers that also occur as counts and mood ids, which would make a
+  // bare-number check cry wolf. Every id field must hold a remapped value (all
+  // remapped ranges sit above every real id), every time must be one we wrote.
+  for (const f of written) {
+    const out = scrubbed.get(f) ?? '';
+    // Each KIND against its own floor. One shared floor passed real ditemids,
+    // which already sit above the itemid range — the check has to know what a
+    // remapped value of each kind looks like.
+    const floors: [RegExp, number][] = [
+      [/<name>itemid<\/name><value><int>(\d+)<\/int>/g, NEW_ITEM_BASE],
+      [/jitemid='(\d+)'/g, NEW_ITEM_BASE],
+      [/<name>ditemid<\/name><value><int>(\d+)<\/int>/g, NEW_ITEM_BASE * 256],
+      [/<comment id='(\d+)'/g, NEW_COMMENT_BASE],
+      [/parentid='(\d+)'/g, NEW_COMMENT_BASE],
+      [/<maxid>(\d+)<\/maxid>/g, NEW_COMMENT_BASE],
+      [/posterid='(\d+)'/g, NEW_USER_BASE],
+      [/<usermap id='(\d+)'/g, NEW_USER_BASE],
+      [/<name>userid<\/name><value><int>(\d+)<\/int>/g, NEW_USER_BASE],
+    ];
+    for (const [re, floor] of floors) {
+      const low = [...out.matchAll(re)].map((m) => Number(m[1])).find((n) => n < floor);
+      if (low !== undefined) {
+        console.error(`  UNMAPPED ${re.source.slice(0, 24)}… ${low} in ${f}`);
+        leaks++;
+      }
+    }
+    for (const t of remapped.real.times) {
+      if (out.includes(t)) {
+        console.error(`  REAL timestamp survived in ${f}`);
+        leaks++;
+        break;
+      }
+    }
+    for (const n of remapped.real.names) {
+      if (dataOf(out).some((d) => d.includes(n))) {
+        console.error(`  REAL community name survived in ${f}`);
+        leaks++;
+        break;
+      }
+    }
+  }
   if (leaks) throw new Error(`${leaks} redacted value(s) survived scrubbing. Nothing published.`);
 
   // Verified. NOW publish.
-  for (const [f, clean] of scrubbed) await writeFile(new URL(f, OUT), clean, 'utf8');
+  // Published names say what a file IS, not when its (remapped) dates fell.
+  const PUBLISHED: Record<string, string> = { 'getevents-2004.xml': 'getevents-older.xml' };
+  for (const [f, clean] of scrubbed)
+    await writeFile(new URL(PUBLISHED[f] ?? f, OUT), clean, 'utf8');
 
   console.log(`  ok — ${redacted.size.toLocaleString()} distinct values redacted, 0 leaked`);
   console.log(`\n  ${written.length} fixtures in tests/fixtures/ — safe to commit.\n`);

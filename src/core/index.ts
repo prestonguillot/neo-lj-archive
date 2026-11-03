@@ -1,5 +1,5 @@
 /**
- * The public surface of core. Shells (src/cli today, src/app at M5) import from
+ * The public surface of core. The shell (src/cli) and the tests import from
  * here and nowhere deeper.
  */
 

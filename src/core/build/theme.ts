@@ -167,7 +167,10 @@ main { padding: 2.5rem 3rem 5rem; max-width: 100rem; }
  * goes — in a column it's a heading, in a bar it's a word taking up a row.
  */
 @media (max-width: 44rem) {
-  .shell { grid-template-columns: 1fr; }
+  /* minmax(0, …), not 1fr: a 1fr track can't shrink below its content's
+     min-content, and the nav's unbreakable labels made every page 662px wide
+     on a 390px phone — the whole site scrolled sideways. */
+  .shell { grid-template-columns: minmax(0, 1fr); }
   .replies { margin-left: .4rem; padding-left: .55rem; }
   .replies .replies .replies .replies { margin-left: 0; padding-left: 0; border-left: 0; }
   .rail {
@@ -177,7 +180,7 @@ main { padding: 2.5rem 3rem 5rem; max-width: 100rem; }
   }
   .rail .site-title { font-size: 1rem; margin: 0; }
   .rail .counts { margin: 0; font-size: 10px; }
-  .rail nav { flex-direction: row; margin: 0 0 0 auto; gap: .6rem; }
+  .rail nav { flex-direction: row; flex-wrap: wrap; margin: 0; gap: .15rem .6rem; }
   .rail nav a { padding: .1rem .25rem; border-left: 0; }
   .rail nav a:hover { border-left: 0; }
   .rail .rail-heading { display: none; }
@@ -354,6 +357,48 @@ h2 { font-family: var(--display); font-size: 1.15rem; letter-spacing: -.01em; }
 .entry-list a:hover { color: var(--rose); }
 .entry-list .d { font-family: var(--meta); font-size: 11px; color: var(--ink-2); min-width: 5.5rem; flex: none; }
 .entry-list .c { font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
+
+/* --- related ------------------------------------------------------------- */
+.related { margin: 2rem 0 0; max-width: 72ch; }
+.related h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; margin-bottom: .25rem; }
+.related .entry-list { max-width: none; }
+/* The shared words, so a link says why it's here. */
+.related .why { display: block; font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
+
+/* --- search -------------------------------------------------------------- */
+/* Results are a reading list, so they keep the reading measure. */
+.search { max-width: 72ch; margin-bottom: 1rem; }
+.search input[type=search] {
+  width: 100%; font: inherit; font-size: 1.1rem; padding: .55rem .7rem;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: var(--radius);
+}
+.search input[type=search]:focus { outline: 2px solid var(--rose); outline-offset: 0; border-color: var(--rose); }
+.search-opts {
+  display: flex; flex-wrap: wrap; gap: .4rem 1.5rem; align-items: center; margin-top: .6rem;
+  font-family: var(--meta); font-size: 12px; color: var(--ink-2);
+}
+.search .scope { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .2rem .9rem; }
+.search .scope legend { float: left; margin-right: .6rem; text-transform: uppercase; letter-spacing: .1em; }
+.search .sort { text-transform: uppercase; letter-spacing: .1em; }
+.search select { font: inherit; text-transform: none; letter-spacing: 0; margin-left: .4rem; background: var(--card); color: var(--ink); border: 1px solid var(--rule); border-radius: var(--radius); }
+.search-help { font-size: 12px; margin: .5rem 0 0; }
+#status { font-family: var(--meta); font-size: 12px; }
+.results { list-style: none; padding: 0; margin: 0; max-width: 72ch; }
+.results li { border-bottom: 1px solid var(--rule); }
+.results a { display: block; padding: .6rem 0; text-decoration: none; color: var(--ink); }
+.results a:hover b { color: var(--rose); }
+.hit-head { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; }
+.hit-head .d, .hit-head .who { font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
+.hit-c .hit-head b { font-weight: 400; color: var(--ink-2); }
+.hit-head .subj { color: var(--ink-2); }
+.snippet { display: block; font-size: 13px; color: var(--ink-2); margin-top: .15rem; }
+.snippet mark { background: color-mix(in srgb, var(--rose) 22%, transparent); color: var(--ink); border-radius: 2px; padding: 0 1px; }
+#more {
+  margin: 1rem 0; font: inherit; font-family: var(--meta); font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+  padding: .45rem .9rem; background: var(--card); color: var(--ink); border: 1px solid var(--rule); border-radius: var(--radius); cursor: pointer;
+}
+#more:hover { border-color: var(--rose); }
 
 .year-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr)); gap: .4rem; }
 .year-grid a {

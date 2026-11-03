@@ -21,8 +21,9 @@ export default tseslint.config(
   // The core/shell boundary (DESIGN.md §15).
   //
   // src/core is a library. It does not know how it is being driven — that's
-  // what makes Electron (M5) a second shell rather than a port. Enforced
-  // here rather than trusted, same posture as the `usejournal` ban (§3).
+  // what lets tests drive it directly, with an in-memory store and a reporter
+  // that records events. Enforced here rather than trusted, same posture as
+  // the `usejournal` ban (§3).
   //
   // Need to report something? Take a ProgressReporter and emit an event.
   // Need a setting? Take it in the config object.

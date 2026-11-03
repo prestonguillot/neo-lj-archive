@@ -4,8 +4,7 @@
  * Inlined as TypeScript rather than read from a .sql file at runtime. tsc does
  * not copy non-TS assets into dist/, so a readFileSync here builds green, tests
  * green (vitest resolves from src/), and then dies on first real use with
- * ENOENT. It did exactly that. A bundler (Electron, M5) would have the same
- * problem with more steps.
+ * ENOENT. It did exactly that.
  */
 export const SCHEMA = `
 -- The canonical store (DESIGN.md §6).

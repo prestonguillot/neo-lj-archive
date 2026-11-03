@@ -112,6 +112,33 @@ export async function buildFixture(): Promise<Fixture> {
         date: '2004-03-15 22:00:00',
       });
     }
+    // On the private entry, so the 8-deep thread above keeps its exact count.
+    // A comment whose WORDS are markup: it must read as "<b>", never bold, and
+    // never run — in the entry or in a search result's snippet.
+    meta.push({ id: 9, jitemid: 2, posterid: undefined, state: 'A' });
+    bodies.push({
+      id: 9,
+      jitemid: 2,
+      parentid: undefined,
+      posterid: undefined,
+      state: 'A',
+      subject: 'Caf&#233; thoughts',
+      body: 'I typed &lt;b onmouseover=alert(1)&gt;not bold&lt;/b&gt; on purpose at the café.',
+      date: '2004-03-16 11:00:00',
+    });
+    // Deleted: arrives with no body at all. Nothing to find, so nothing indexed.
+    meta.push({ id: 10, jitemid: 2, posterid: 100, state: 'D' });
+    bodies.push({
+      id: 10,
+      jitemid: 2,
+      parentid: undefined,
+      posterid: 100,
+      state: 'D',
+      subject: undefined,
+      body: undefined,
+      date: '2004-03-16 12:00:00',
+    });
+
     store.putCommentMeta(meta);
     store.putCommentBodies(bodies);
 

@@ -99,7 +99,7 @@ test('a poll LJ kept server-side is named, not dropped', async ({ page }) => {
   await expect(page.locator('.lj-lost')).toContainText('poll');
   await expect(page.locator('.lj-lost')).toContainText('1438708');
   // The prose after the unclosed tag survives it.
-  await expect(page.locator('.body')).toContainText('And life went on');
+  await expect(page.locator('.entry .body')).toContainText('And life went on');
 });
 
 // catches: an unclosed cut swallowing or hiding the rest of the entry. 54 of 69
@@ -138,7 +138,7 @@ test('comments nest as a real thread', async ({ page }) => {
 test('a private entry is marked but fully readable', async ({ page }) => {
   await page.goto(url('entries/277.html'));
   await expect(page.locator('.security-private')).toContainText('private');
-  await expect(page.locator('.body')).toContainText('So LiveJournal, I ask you');
+  await expect(page.locator('.entry .body')).toContainText('So LiveJournal, I ask you');
 });
 
 // catches: navigation that dead-ends. The calendar is tablestakes (§7.2), and a
@@ -166,4 +166,31 @@ test('a bare hostname link points off-site, not at a local file', async ({ page 
 test('a mood stored only as an id resolves to its name', async ({ page }) => {
   await page.goto(url('entries/277.html'));
   await expect(page.locator('.mood')).toContainText('exhausted');
+});
+
+// catches: any page wider than a phone. The mobile grid used a 1fr track, which
+// can't shrink below its content, so the rail's unbreakable nav labels made every
+// page 662px wide on a 390px screen — the whole site scrolled sideways, and a
+// screenshot check at mobile width had called it fine. Every page kind, measured.
+test.describe('at phone width', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+  for (const rel of [
+    'index.html',
+    'entries/266.html',
+    'calendar/index.html',
+    'calendar/2004/index.html',
+    'tags/index.html',
+    'people/index.html',
+    'retrospect/index.html',
+    'search/index.html',
+  ]) {
+    test(`${rel} never scrolls sideways`, async ({ page }) => {
+      await page.goto(url(rel));
+      const { sw, cw } = await page.evaluate(() => ({
+        sw: document.documentElement.scrollWidth,
+        cw: document.documentElement.clientWidth,
+      }));
+      expect(sw).toBeLessThanOrEqual(cw);
+    });
+  }
 });

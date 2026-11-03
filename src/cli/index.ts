@@ -177,7 +177,7 @@ program
   .command('classify')
   .description('Optional: LLM pass over suspect image hashes. Skipping keeps images as-is.')
   .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
-  .action(NOT_YET('M5'));
+  .action(NOT_YET('unscheduled'));
 
 program
   .command('build')

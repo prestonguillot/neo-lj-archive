@@ -3,8 +3,8 @@ import type { ProgressEvent, ProgressReporter } from '../core/index.js';
 /**
  * The CLI's half of the core/shell seam (DESIGN.md §15).
  *
- * Core emits ProgressEvents; this turns them into terminal output. Electron
- * (M5) will implement the same interface against a window. Nothing here is
+ * Core emits ProgressEvents; this turns them into terminal output. Tests
+ * implement the same interface to collect events instead. Nothing here is
  * importable from core — that's the whole point, and the lint rule enforces it.
  */
 

@@ -3,16 +3,16 @@ import { splitMusic, musicKey } from './index.js';
 
 /**
  * current_music parsing and the dedup key (DESIGN.md §10). The rule was DERIVED
- * from the corpus (409/473 use " - "), and a real bug shipped here once — commit
+ * from the corpus (most entries use " - "), and a real bug shipped here once — commit
  * "normalise so the count is true". These are the oracle values, chosen from LJ's
  * actual shapes, not read off the code.
  */
 describe('splitMusic', () => {
   it.each([
-    ['artist - song', 'Brand New - Sic Transit Gloria', 'Brand New', 'Sic Transit Gloria'],
-    ['song title contains a hyphen', 'Jay-Z - 99 Problems', 'Jay-Z', '99 Problems'],
-    ['song by artist (reversed)', 'Hallelujah by Jeff Buckley', 'Jeff Buckley', 'Hallelujah'],
-    ['no separator is all artist', 'Radiohead', 'Radiohead', null],
+    ['artist - song', 'Glass Harbor - Paper Lanterns', 'Glass Harbor', 'Paper Lanterns'],
+    ['artist contains a hyphen', 'Re-Entry - Ninety Rooms', 'Re-Entry', 'Ninety Rooms'],
+    ['song by artist (reversed)', 'Lullaby by Ottoline Vance', 'Ottoline Vance', 'Lullaby'],
+    ['no separator is all artist', 'Quiet Engine', 'Quiet Engine', null],
   ])('%s', (_label, raw, artist, song) => {
     expect(splitMusic(raw)).toEqual({ artist, song });
   });
@@ -20,29 +20,29 @@ describe('splitMusic', () => {
   // catches: " - " matching on the FIRST occurrence — a song with " - " in it must
   // still attribute the artist correctly (artist is before the first separator).
   it('splits on the first " - " only', () => {
-    expect(splitMusic('Sufjan - Chicago - Reprise')).toEqual({
-      artist: 'Sufjan',
-      song: 'Chicago - Reprise',
+    expect(splitMusic('Marrowgate - Lighthouse - Reprise')).toEqual({
+      artist: 'Marrowgate',
+      song: 'Lighthouse - Reprise',
     });
   });
 });
 
 describe('musicKey (dedup — the count depends on it)', () => {
-  // catches: the exact "count is true" bug — Green Day (14) and Greenday (8)
-  // counted as two artists when they are one. THE reason this function exists.
+  // catches: the exact "count is true" bug — one band typed two ways (with and
+  // without the space) counted as two artists when they are one. THE reason this function exists.
   it.each([
-    ['whitespace', 'Green Day', 'Greenday'],
-    ['leading The', 'The Beatles', 'Beatles'],
-    ['case', 'RADIOHEAD', 'radiohead'],
-    ['trailing punctuation', 'Weezer!', 'Weezer'],
-    ['ampersand entity', 'Iron &amp; Wine', 'Iron & Wine'],
+    ['whitespace', 'Glass Harbor', 'Glassharbor'],
+    ['leading The', 'The Kestrels', 'Kestrels'],
+    ['case', 'QUIET ENGINE', 'quiet engine'],
+    ['trailing punctuation', 'Lanternfish!', 'Lanternfish'],
+    ['ampersand entity', 'Salt &amp; Cedar', 'Salt & Cedar'],
   ])('folds %s to one key', (_label, a, b) => {
     expect(musicKey(a)).toBe(musicKey(b));
   });
 
   // catches: over-folding — two genuinely different artists must NOT merge.
   it('keeps distinct artists distinct', () => {
-    expect(musicKey('Brand New')).not.toBe(musicKey('Green Day'));
-    expect(musicKey('The Beatles')).not.toBe(musicKey('The Beach Boys'));
+    expect(musicKey('Glass Harbor')).not.toBe(musicKey('Quiet Engine'));
+    expect(musicKey('The Kestrels')).not.toBe(musicKey('The Kestrel Boys'));
   });
 });

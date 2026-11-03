@@ -12,8 +12,8 @@ import type { CommentMeta, CommentBody } from '../fetch/types.js';
  * Escaping fidelity (DESIGN.md §4.3, §10).
  *
  * The build double-escaped every display value: it called esc() AND bound the
- * result into EJS <%=, which escapes again — so "Iron & Wine" shipped as
- * "Iron &amp;amp; Wine", rendered by a browser as the literal "Iron &amp; Wine".
+ * result into EJS <%=, which escapes again — so "Salt & Cedar" shipped as
+ * "Iron &amp;amp; Wine", rendered by a browser as the literal "Salt &amp; Cedar".
  * 25 instances across titles, tags, moods, names, tooltips. EJS <%= is the single
  * escaping owner; esc() belongs only where the build assembles raw HTML by hand
  * (the comment byline anchor). Found by a review agent, confirmed in the output.
@@ -37,8 +37,8 @@ describe('invariant: display values are escaped exactly once', () => {
         ditemid: 266,
         eventtime: '2004-03-15 21:30:00',
         logtime: '2004-03-15 21:30:00',
-        // Ampersand in the subject: the exact "Iron & Wine" shape that broke.
-        subject: 'Iron & Wine <best band>',
+        // Ampersand in the subject: the exact "Salt & Cedar" shape that broke.
+        subject: 'Salt & Cedar <best band>',
         body: 'hello',
         security: 'public',
         allowmask: undefined,
@@ -94,7 +94,7 @@ describe('invariant: display values are escaped exactly once', () => {
   });
 
   it.each([
-    ['subject', 'Iron &amp; Wine'],
+    ['subject', 'Salt &amp; Cedar'],
     ['mood', 'cranky &amp; tired'],
     ['music', 'Simon &amp; Garfunkel'],
     ['tag', 'rock &amp; roll'],

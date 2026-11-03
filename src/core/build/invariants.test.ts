@@ -6,8 +6,8 @@ import { renderBody, type RenderContext } from './render.js';
  * Invariants, not examples (DESIGN.md §10).
  *
  * The rest of the suite asserts specific behaviours I had already thought of,
- * which is exactly why it was green while entry 406397 rendered 1 of its 3
- * images and entry 127053 silently ate its own sign-off. A test written from my
+ * which is exactly why it was green while an entry rendered 1 of its 3 images
+ * and another silently ate its own sign-off. A test written from my
  * beliefs cannot catch a bug caused by my beliefs.
  *
  * Every real bug this project has had was ONE thing: content going in and not
@@ -41,7 +41,7 @@ const ctx = (over: Partial<RenderContext> = {}): RenderContext => ({
  * NUMERIC entities are the point. LJ stores apostrophes as &#39;, so a source
  * reading `don&#39;t` renders correctly as `don't` — and comparing those raw
  * strings scores a CORRECT render as data loss. That false positive cost real
- * time on entry 403272 before the instrument was fixed. An assertion that fires
+ * time before the instrument was fixed. An assertion that fires
  * on correct behaviour is worse than no assertion.
  */
 const text = (html: string): string =>
@@ -132,8 +132,8 @@ describe('invariant: an unclosed LJ tag never eats the rest of the entry', () =>
 /**
  * Markup-shaped text is text. HTML5 sends `</` plus a non-letter into the BOGUS
  * COMMENT state, which swallows to the next `>` — and with none, the rest of the
- * body. A broken heart cost entry 127053 its sign-off AND the author's name,
- * while the live LJ page rendered both.
+ * body. A broken heart cost an entry its sign-off AND the author's name, while
+ * the live LJ page rendered both.
  */
 describe('invariant: emoticons that look like markup survive', () => {
   it.each(['</3', '<3', '<-', '</', '>_<', '<_<', '</3, Preston'])(
@@ -180,8 +180,8 @@ describe('invariant: a newline is a line break', () => {
 
   // catches: injecting breaks into table markup. A newline between <tr> and <td>
   // is indentation, not writing, and breaking it puts blank rows in the layout.
-  // Derived from the live journal: entry 35094 has 620 newlines, ~617 inside a
-  // table, and LJ renders 3 breaks.
+  // Derived from live pages: an entry with ~620 newlines, nearly all inside a
+  // table, renders with 3 breaks on LJ.
   it('does not break newlines inside table markup', () => {
     const html = renderBody('<table>\n<tr>\n<td>\ncell\n</td>\n</tr>\n</table>', ctx());
     expect(html).not.toContain('<br>');
@@ -193,7 +193,7 @@ describe('invariant: a newline is a line break', () => {
 
   // catches: over-suppressing. My first suppression list included ul/ol on the
   // reasoning that indentation in a list is markup. The live page says otherwise:
-  // entry 353595 has 6 newlines in a <ul> and LJ renders 6 breaks. A rule reasoned
+  // an entry with 6 newlines in a <ul> renders 6 breaks on LJ. A rule reasoned
   // out from first principles lost to one look at the thing.
   it('DOES break inside a list, because LiveJournal does', () => {
     const html = renderBody('<ul><li>one\ntwo</li></ul>', ctx());

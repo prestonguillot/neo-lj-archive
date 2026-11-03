@@ -25,7 +25,7 @@ const filler = (from: number): RelatedDoc[] =>
     'gardening tomatoes compost trellis',
     'taxes paperwork accountant receipts',
     'dentist appointment cavity filling',
-    'snowboarding tahoe lift tickets',
+    'snowboarding alpine lift tickets',
     'birthday cake candles frosting',
     'laundry detergent dryer lint',
   ].map((t, i) => doc(from + i, t));
@@ -35,8 +35,8 @@ describe('relatedEntries', () => {
   // self-skip every list would open with a link back to the page you're on.
   it('never relates an entry to itself', () => {
     const rs = relatedEntries([
-      doc(1, 'warfield concert dragonforce encore'),
-      doc(2, 'warfield concert dragonforce encore'),
+      doc(1, 'kestrelhall concert glassharbor encore'),
+      doc(2, 'kestrelhall concert glassharbor encore'),
       ...filler(10),
     ]);
     for (const [id, list] of rs) expect(list.map((r) => r.id)).not.toContain(id);
@@ -48,8 +48,8 @@ describe('relatedEntries', () => {
   it('ranks a shared rare name above shared everyday words', () => {
     const everyday = 'tonight work tired sleep coffee';
     const rs = relatedEntries([
-      doc(1, `${everyday} cassie picayune`),
-      doc(2, `cassie picayune hospital`),
+      doc(1, `${everyday} ottoline gazette`),
+      doc(2, `ottoline gazette clinic`),
       doc(3, `${everyday} bus`),
       doc(4, `${everyday} rain`),
       doc(5, `${everyday} movie`),
@@ -62,9 +62,9 @@ describe('relatedEntries', () => {
   // highest against everything by sheer volume, and becomes everyone's "related".
   it("doesn't let one long entry relate to everything", () => {
     const pairs = [
-      ['benadryl sinus dreams', 'benadryl sinus pharmacy'],
-      ['warfield dragonforce encore', 'warfield dragonforce tickets'],
-      ['picayune deadline editor', 'picayune deadline printer'],
+      ['lozenge decongestant dreams', 'lozenge decongestant pharmacy'],
+      ['kestrelhall glassharbor encore', 'kestrelhall glassharbor tickets'],
+      ['gazette deadline editor', 'gazette deadline printer'],
     ];
     const docs = pairs.flatMap(([a, b], i) => [doc(i * 2 + 1, a!), doc(i * 2 + 2, b!)]);
     const everything = doc(99, Array(20).fill(pairs.flat().join(' ')).join(' '));
@@ -101,7 +101,7 @@ describe('relatedEntries', () => {
   // catches: ties ordered by Map iteration instead of id — the same archive.db
   // would build different bytes depending on input order.
   it('breaks ties by id, whatever order entries arrive in', () => {
-    const same = 'warfield dragonforce encore';
+    const same = 'kestrelhall glassharbor encore';
     const forward = relatedEntries([doc(1, same), doc(2, same), doc(3, same), ...filler(10)]);
     const backward = relatedEntries([...filler(10), doc(3, same), doc(2, same), doc(1, same)]);
     expect(ids(forward, 1)).toEqual([2, 3]);
@@ -110,24 +110,24 @@ describe('relatedEntries', () => {
 
   it('explains each link with words both entries hold', () => {
     const rs = relatedEntries([
-      doc(1, 'warfield dragonforce encore'),
-      doc(2, 'warfield dragonforce tickets'),
+      doc(1, 'kestrelhall glassharbor encore'),
+      doc(2, 'kestrelhall glassharbor tickets'),
       ...filler(10),
     ]);
-    expect([...(rs.get(1)?.[0]?.why ?? [])].sort()).toEqual(['dragonforce', 'warfield']);
+    expect([...(rs.get(1)?.[0]?.why ?? [])].sort()).toEqual(['glassharbor', 'kestrelhall']);
   });
 });
 
 describe('tokens', () => {
   // catches: the same word counted as two because of case, accents, or an
-  // apostrophe — "Café"/"cafe" and "Cassie's"/"Cassie’s" must meet.
+  // apostrophe — "Café"/"cafe" and "Ottoline's"/"Ottoline’s" must meet.
   it('folds case, accents, and apostrophes', () => {
-    expect(tokens("Café CAFE cafe Cassie's Cassie\u2019s")).toEqual([
+    expect(tokens("Café CAFE cafe Ottoline's Ottoline\u2019s")).toEqual([
       'cafe',
       'cafe',
       'cafe',
-      'cassies',
-      'cassies',
+      'ottolines',
+      'ottolines',
     ]);
   });
 });
@@ -182,8 +182,8 @@ describe('related links in the built site', () => {
       props: {},
     });
     store.putEntries([
-      entry(1, 101, 'saw dragonforce at the warfield last night'),
-      entry(2, 202, 'still deaf from dragonforce at the warfield'),
+      entry(1, 101, 'saw glassharbor at the kestrelhall last night'),
+      entry(2, 202, 'still deaf from glassharbor at the kestrelhall'),
       entry(3, 303, 'tomatoes in the garden'),
       entry(4, 404, 'paperwork for taxes'),
       entry(5, 505, 'dentist again'),
@@ -219,7 +219,7 @@ describe('related links in the built site', () => {
     expect(links).toBeGreaterThan(0);
   });
 
-  it('links the two Warfield entries to each other', () => {
+  it('links the two Kestrelhall entries to each other', () => {
     const page = readFileSync(join(dir, 'site', 'entries', '101.html'), 'utf8');
     expect(page).toContain('href="../entries/202.html"');
   });

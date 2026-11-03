@@ -4,8 +4,8 @@
  *
  * This exists because the test suite cannot find this class of bug. The fixtures
  * are ones I wrote, so they encode what I already believed; 145 unit tests and 12
- * browser tests were green while entry 406397 silently rendered 1 of its 3
- * images. Preston found it in a minute by opening the live page. LiveJournal is
+ * browser tests were green while an entry silently rendered 1 of its 3 images.
+ * The author found it in a minute by opening the live page. LiveJournal is
  * the only oracle here that doesn't share the author's blind spots.
  *
  * All three of these work — text parity, structure parity, and the harvest.
@@ -50,7 +50,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { parse } from 'parse5';
+import { parse, serializeOuter } from 'parse5';
 import { renderBody } from '../src/core/build/render.js';
 import { SCHEMA } from '../src/core/store/schema.js';
 import { readHidden } from '../src/cli/credentials.js';
@@ -94,7 +94,6 @@ const saveState = (s: State): void => {
   writeFileSync(STATE, JSON.stringify(s, null, 2));
 };
 
-const USER = process.env['LJ_USER'] ?? 'evilgoatbob';
 const SAMPLE = Number(process.argv[2] ?? 40);
 
 /** LJ bans clients and a 403 is terminal (§9). This is deliberately slow. */
@@ -105,6 +104,26 @@ const db = new DatabaseSync('./archive/archive.db');
 // applied by hand — the userpic tables are new and every statement is
 // CREATE ... IF NOT EXISTS, so this is idempotent on an existing archive.
 db.exec(SCHEMA);
+
+/**
+ * Whose journal. LJ_USER, else the username `neo-lj fetch` recorded in
+ * archive.db — never a default: this script works for any journal, and nobody's
+ * name belongs baked into it. Recorded once given, so later runs don't ask.
+ */
+const savedUser = (
+  db.prepare("SELECT value FROM sync_state WHERE key = 'username'").get() as
+    { value: string } | undefined
+)?.value;
+const USER = process.env['LJ_USER'] ?? savedUser ?? '';
+if (USER === '') {
+  console.error('Whose journal? Set LJ_USER once (e.g. LJ_USER=yourname); it is remembered after.');
+  process.exit(2);
+}
+if (savedUser !== USER) {
+  db.prepare(
+    "INSERT INTO sync_state (key, value) VALUES ('username', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+  ).run(USER);
+}
 
 interface Row {
   ditemid: number;
@@ -124,8 +143,8 @@ function sample(seen: Set<string>): Row[] {
     // lj-poll and lj-template are DELIBERATELY not sampled. Four of them audited
     // and all four diverge identically: LJ renders questions it kept on its own
     // servers, the export has only <lj-poll-NNN>, and the page already says so.
-    // Auditing more would re-confirm a known, unrecoverable class at 2s a request
-    // and find nothing new. 25 entries carry them; none is checkable this way.
+    // Auditing more would re-confirm a known class at 2s a request and find
+    // nothing new.
     ['lj-cut', "body LIKE '%<lj-cut%'"],
     ['table', "body LIKE '%<table%'"],
     ['lj-user', "body LIKE '%<lj user%'"],
@@ -181,8 +200,7 @@ function sample(seen: Set<string>): Row[] {
  * NUMERIC entities matter as much as the named ones. LJ stores apostrophes as
  * &#39;, so the source reads `don&#39;t` while the renderer correctly emits
  * `don't` \u2014 and comparing those raw strings scores a CORRECT render as data
- * loss. That was the entirety of the "RENDERER-LOSS" on entry 403272: six
- * apostrophes. A measurement that flags correct behaviour is worse than none,
+ * loss. One whole "RENDERER-LOSS" report was exactly that: six apostrophes. A measurement that flags correct behaviour is worse than none,
  * because it spends a human's attention on nothing.
  */
 const plain = (s: string): string =>
@@ -735,6 +753,26 @@ async function main(): Promise<void> {
     if (liveBody === null) notLocated++;
     else if (gap > 0) dbLoss++;
     if (brDiff !== 0) structLoss++;
+    // What LJ shows for an entry that still disagrees, beside what we render, so a
+    // divergence can be read rather than only counted. Private content: it lands
+    // under archive/, which is gitignored.
+    if (gap !== 0 || brDiff !== 0) {
+      mkdirSync('./archive/audit/divergent', { recursive: true });
+      writeFileSync(
+        `./archive/audit/divergent/${r.ditemid}.json`,
+        JSON.stringify(
+          {
+            ditemid: r.ditemid,
+            gap,
+            brDiff,
+            lj: { html: pg.body ? serializeOuter(pg.body as never) : null, text: liveBody },
+            ours: { html: renderedHtml, text: plain(renderedHtml) },
+          },
+          null,
+          2,
+        ),
+      );
+    }
     // Record every verdict, so the next chunk starts where this one stopped.
     state[String(r.ditemid)] = { shape: r.shape, gap: liveBody === null ? -1 : gap, brDiff };
     // Per entry, not per chunk. A run that is killed at 75/228 must keep its 75

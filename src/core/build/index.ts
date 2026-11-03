@@ -239,8 +239,8 @@ export function splitMusic(raw: string): { artist: string; song: string | null }
 /**
  * A key for GROUPING only — never for display.
  *
- * "Green Day", "green day" and "The Beatles" vs "Beatles" are the same act typed
- * differently across seven years. Normalising for the count is what makes the
+ * "Glass Harbor", "glass harbor" and "The Kestrels" vs "Kestrels" are the same
+ * act typed differently across years. Normalising for the count is what makes the
  * number true; the page still shows the spelling the author actually used.
  */
 export function musicKey(s: string): string {
@@ -249,12 +249,11 @@ export function musicKey(s: string): string {
       .toLowerCase()
       .replace(/&amp;/g, '&')
       .replace(/^the\s+/, '')
-      // Everything that is not a letter or digit goes. Seven years of typing the
-      // same band name produces "Green Day" and "Greenday" — which listed as two
-      // artists, 14 plays and 8, and that split is exactly what normalisation is
-      // for. Checked against the real values before applying: it fuses green
-      // day/greenday, lost prophets/lostprophets, gold finger/goldfinger and fall
-      // out boy/fallout boy, and nothing else. Four merges, zero false ones.
+      // Everything that is not a letter or digit goes. Years of typing the same
+      // band name produce "Glass Harbor" and "Glassharbor" — which listed as two
+      // artists, and that split is exactly what normalisation is for. Checked
+      // against a real journal's values before applying: every merge it made was
+      // the same band with and without a space, and there were no false ones.
       .replace(/[^a-z0-9]/g, '')
   );
 }

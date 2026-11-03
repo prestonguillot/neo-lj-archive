@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import type { Recovered } from '../fetch/ljpage.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { SCHEMA } from './schema.js';
 import { dirname, join } from 'node:path';
@@ -183,6 +184,21 @@ export class Store {
         for (const t of e.tags) addTag.run(e.itemid, t);
       }
     });
+  }
+
+  /** Content LJ kept server-side, recovered from its pages (schema: lj_recovered). */
+  putRecovered(
+    ditemid: number,
+    key: string,
+    data: Recovered,
+    now = new Date().toISOString(),
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO lj_recovered (ditemid, key, data_json, fetched_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (ditemid, key) DO UPDATE SET data_json = excluded.data_json, fetched_at = excluded.fetched_at`,
+      )
+      .run(ditemid, key, JSON.stringify(data), now);
   }
 
   putMoods(moods: readonly Mood[]): void {

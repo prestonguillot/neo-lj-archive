@@ -358,6 +358,25 @@ h2 { font-family: var(--display); font-size: 1.15rem; letter-spacing: -.01em; }
 .entry-list .d { font-family: var(--meta); font-size: 11px; color: var(--ink-2); min-width: 5.5rem; flex: none; }
 .entry-list .c { font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
 
+/* --- recovered LJ content: polls, Writer's Block prompts ------------------ */
+.lj-recovered {
+  margin: 1rem 0; padding: .8rem 1rem; max-width: 62ch;
+  background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--amber);
+  border-radius: var(--radius);
+}
+.lj-recovered figcaption b, .lj-prompt-title { font-family: var(--display); }
+.lj-poll-meta { display: block; font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
+.lj-poll-q { font-weight: 700; margin: .7rem 0 .3rem; }
+.lj-poll-answers { list-style: none; padding: 0; margin: 0; }
+.lj-poll-answers li { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: .3rem 0; border-bottom: 1px solid var(--rule); }
+.lj-poll-n {
+  flex: none; font-family: var(--meta); font-size: 12px; color: var(--ink-2); min-width: 7rem; text-align: right;
+  /* The share of votes as a thin bar under the count: --p is set per answer. */
+  padding: 0 0 4px;
+  background: linear-gradient(to right, var(--amber) var(--p, 0%), var(--rule) var(--p, 0%)) no-repeat left bottom / 100% 3px;
+}
+.lj-recovered-note { margin: .6rem 0 0; font-family: var(--meta); font-size: 11px; color: var(--ink-2); }
+
 /* --- related ------------------------------------------------------------- */
 .related { margin: 2rem 0 0; max-width: 72ch; }
 .related h2 { color: var(--ink-2); font-size: .95rem; text-transform: uppercase; letter-spacing: .1em; margin-bottom: .25rem; }

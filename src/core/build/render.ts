@@ -1,4 +1,5 @@
 import { parseFragment, serialize } from 'parse5';
+import { pollKey, templateKey, type Recovered } from '../fetch/ljpage.js';
 
 /**
  * Turn a 2005 LiveJournal body into something a browser in 2040 renders right
@@ -48,6 +49,12 @@ export interface RenderContext {
    * than trying to play it inline, over a poster frame stored locally.
    */
   readonly embedUrl?: (index: number) => { watch: string; poster?: string } | undefined;
+  /**
+   * What an <lj-poll-N> or <lj-template> stood for, when the live audit recovered
+   * it from LJ's page (keys from core/fetch/ljpage.ts). undefined means it was
+   * never recovered, and the placeholder is named instead.
+   */
+  readonly recovered?: (key: string) => Recovered | undefined;
 }
 
 interface Node {
@@ -127,7 +134,7 @@ function deadImage(url: string, reason: string | undefined, alt: string | undefi
   );
 }
 
-/** Any lj-* element. The poll id is part of the TAG NAME: <lj-poll-1438708>. */
+/** Any lj-* element. The poll id is part of the TAG NAME: <lj-poll-9000001>. */
 const LJ_TAG = /^lj-/i;
 const LJ_POLL = /^lj-poll(?:-(\d+))?$/i;
 
@@ -144,7 +151,104 @@ export const RENDERER_TEXT_CLASSES: ReadonlySet<string> = new Set([
   'embed-lost',
   'lj-lost',
   'dead-image',
+  // Recovered LJ content: LJ's wording (who could vote, a Writer's Block prompt)
+  // and our "recovered from" label. A poll's own question and answers are the
+  // author's and stay countable.
+  'lj-recovered-note',
+  'lj-poll-meta',
+  'lj-prompt',
 ]);
+
+/**
+ * A recovered poll or prompt, as static markup. Built from nodes and text, never
+ * a string of HTML: every word here came from a web page, and an answer that
+ * reads "<b>" has to show "<b>".
+ */
+function recoveredNode(r: Recovered): Node {
+  const note = el(
+    'p',
+    [{ name: 'class', value: 'lj-recovered-note' }],
+    [text('Recovered from LiveJournal, which kept it on its own servers')],
+  );
+  if (r.kind === 'prompt') {
+    const title =
+      r.url !== undefined
+        ? el(
+            'a',
+            [
+              { name: 'href', value: r.url },
+              { name: 'rel', value: 'noopener noreferrer' },
+            ],
+            [text(r.title)],
+          )
+        : text(r.title);
+    return el(
+      'aside',
+      [{ name: 'class', value: 'lj-recovered lj-prompt' }],
+      [
+        el('p', [{ name: 'class', value: 'lj-prompt-title' }], [text("Writer's Block: "), title]),
+        ...(r.text !== '' ? [el('p', [], [text(r.text)])] : []),
+        note,
+      ],
+    );
+  }
+  const head = [text(`Poll #${r.id}`), ...(r.title !== '' ? [text(` \u2014 ${r.title}`)] : [])];
+  return el(
+    'figure',
+    [{ name: 'class', value: 'lj-recovered lj-poll' }],
+    [
+      el(
+        'figcaption',
+        [],
+        [
+          el('b', [], head),
+          ...(r.meta !== ''
+            ? [el('span', [{ name: 'class', value: 'lj-poll-meta' }], [text(r.meta)])]
+            : []),
+        ],
+      ),
+      ...r.questions.flatMap((q) => [
+        el('p', [{ name: 'class', value: 'lj-poll-q' }], [text(q.text)]),
+        el(
+          'ul',
+          [{ name: 'class', value: 'lj-poll-answers' }],
+          q.answers.map((a) =>
+            el(
+              'li',
+              [],
+              [
+                el('span', [{ name: 'class', value: 'lj-poll-a' }], [text(a.text)]),
+                ...(a.count !== undefined
+                  ? [
+                      el(
+                        'span',
+                        [
+                          { name: 'class', value: 'lj-poll-n' },
+                          // The bar's length, as data the stylesheet reads. Our value,
+                          // a number we parsed — never page text.
+                          {
+                            name: 'style',
+                            value: `--p:${Math.max(0, Math.min(100, a.percent ?? 0))}%`,
+                          },
+                        ],
+                        // One decimal, always — LJ's own format ("0.0%", not "0%").
+                        [
+                          text(
+                            ` ${a.count}${a.percent !== undefined ? ` (${a.percent.toFixed(1)}%)` : ''}`,
+                          ),
+                        ],
+                      ),
+                    ]
+                  : []),
+              ],
+            ),
+          ),
+        ),
+      ]),
+      note,
+    ],
+  );
+}
 
 function ljLostLabel(tag: string, node: Node): string {
   const poll = LJ_POLL.exec(tag);
@@ -516,11 +620,22 @@ export function renderBody(html: string, ctx: RenderContext): string {
       // fixture contains none of them, which is exactly why this is a rule about
       // the class rather than a list of the four I happened to find.
       //
-      // A browser renders an unknown tag as nothing, so an entry reading "So
-      // LiveJournal, I ask you:" would trail off into silence. Naming the gap is
+      // A browser renders an unknown tag as nothing, so an entry that asks a
+      // question and hands it to a poll would trail off into silence. Naming the gap is
       // the honest rendering (§4.3), and keeping the id leaves it recoverable.
+      const pollId = LJ_POLL.exec(tag)?.[1];
+      const tplId = tag.toLowerCase() === 'lj-template' ? attr(node, 'id') : undefined;
+      const key =
+        pollId !== undefined
+          ? pollKey(Number(pollId))
+          : tplId !== undefined
+            ? templateKey(tplId)
+            : undefined;
+      const got = key !== undefined ? ctx.recovered?.(key) : undefined;
       replaceWith(node, [
-        el('span', [{ name: 'class', value: 'lj-lost' }], [text(ljLostLabel(tag, node))]),
+        got !== undefined
+          ? recoveredNode(got)
+          : el('span', [{ name: 'class', value: 'lj-lost' }], [text(ljLostLabel(tag, node))]),
         // Same void-tag trap as <lj user>: LJ never closed these, so parse5 nests
         // the rest of the entry INSIDE them. Hoist the children back to siblings
         // or everything after a poll vanishes with it.

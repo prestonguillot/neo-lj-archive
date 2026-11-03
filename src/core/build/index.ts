@@ -11,6 +11,7 @@ import { resolveAssetUrl } from '../images/extract.js';
 import { STYLE } from './theme.js';
 import { textOf, searchDataJs, SEARCH_JS, type SearchRecord } from './search.js';
 import { relatedEntries } from './related.js';
+import type { Recovered } from '../fetch/ljpage.js';
 import * as T from './templates.js';
 import { Store } from '../store/db.js';
 import type { Config } from '../config.js';
@@ -497,6 +498,22 @@ export async function buildSite(
   // is exactly what the page shows (§7.4).
   const searchRecords: SearchRecord[] = [];
 
+  // Polls and prompts LJ kept server-side, recovered by the live audit (§5.3).
+  // A row that doesn't parse is skipped: the placeholder is named instead, which
+  // is the honest fallback, not a crash.
+  const recovered = new Map<string, Recovered>();
+  for (const row of store.query('SELECT ditemid, key, data_json FROM lj_recovered') as {
+    ditemid: number;
+    key: string;
+    data_json: string;
+  }[]) {
+    try {
+      recovered.set(`${row.ditemid}|${row.key}`, JSON.parse(row.data_json) as Recovered);
+    } catch {
+      report({ kind: 'warn', message: `unreadable recovered ${row.key} on entry ${row.ditemid}` });
+    }
+  }
+
   // The render context for one entry and its comments.
   const ctxFor = (e: EntryRow): RenderContext => {
     const entryEmbeds = embedsByEntry.get(e.ditemid) ?? [];
@@ -514,6 +531,7 @@ export async function buildSite(
       username: config.username,
       entryHref: (d: number) => (heldDitemids.has(d) ? entryPath(d) : undefined),
       root: rootFor(entryPath(e.ditemid)),
+      recovered: (key: string) => recovered.get(`${e.ditemid}|${key}`),
     };
   };
 

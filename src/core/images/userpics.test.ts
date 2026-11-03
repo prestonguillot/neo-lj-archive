@@ -38,7 +38,7 @@ const GIF = (w: number, h: number): Uint8Array => {
   return new Uint8Array(b);
 };
 
-const url = (picid: number): string => `https://l-userpic.livejournal.com/${picid}/1403367`;
+const url = (picid: number): string => `https://l-userpic.livejournal.com/${picid}/7000001`;
 
 function seed(store: Store, pics: [number, number][]): void {
   for (const [picid, userid] of pics) {
@@ -72,7 +72,7 @@ describe('downloadUserpics', () => {
   it('stores a pic and links it to its picid', async () => {
     const store = Store.openMemory();
     const dir = tmp();
-    seed(store, [[11, 1403367]]);
+    seed(store, [[11, 7000001]]);
     const stats = await run(store, dir, stub({ [url(11)]: () => new Response(PNG(100, 100)) }));
     expect(stats.stored).toBe(1);
     const row = store.query('SELECT hash, fetched_at FROM userpics WHERE picid=11') as {

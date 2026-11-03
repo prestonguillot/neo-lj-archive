@@ -97,7 +97,7 @@ test('both people in a row render as links', async ({ page }) => {
 test('a poll LJ kept server-side is named, not dropped', async ({ page }) => {
   await page.goto(url('entries/277.html'));
   await expect(page.locator('.lj-lost')).toContainText('poll');
-  await expect(page.locator('.lj-lost')).toContainText('1438708');
+  await expect(page.locator('.lj-lost')).toContainText('9000001');
   // The prose after the unclosed tag survives it.
   await expect(page.locator('.entry .body')).toContainText('And life went on');
 });
@@ -138,7 +138,7 @@ test('comments nest as a real thread', async ({ page }) => {
 test('a private entry is marked but fully readable', async ({ page }) => {
   await page.goto(url('entries/277.html'));
   await expect(page.locator('.security-private')).toContainText('private');
-  await expect(page.locator('.entry .body')).toContainText('So LiveJournal, I ask you');
+  await expect(page.locator('.entry .body')).toContainText('Settle this for me, internet');
 });
 
 // catches: navigation that dead-ends. The calendar is tablestakes (§7.2), and a
@@ -193,4 +193,20 @@ test.describe('at phone width', () => {
       expect(sw).toBeLessThanOrEqual(cw);
     });
   }
+});
+
+// catches: recovered LJ content not reaching the page — the poll and prompt are
+// in archive.db, but the entry still says LJ kept them, or the text after the
+// poll vanishes into the unclosed tag.
+test('a poll and prompt recovered from LJ render in place, offline', async ({ page }) => {
+  await page.goto(url('entries/288.html'));
+  const poll = page.locator('figure.lj-poll');
+  await expect(poll).toBeVisible();
+  await expect(poll).toContainText('Which snack wins the night');
+  await expect(poll.locator('.lj-poll-answers li')).toHaveCount(2);
+  await expect(poll.locator('.lj-poll-answers li').nth(1)).toContainText('Pretzels');
+  await expect(poll.locator('.lj-poll-answers li').nth(1)).toContainText('4 (57.1%)');
+  await expect(page.locator('aside.lj-prompt')).toContainText('What did you listen to first?');
+  await expect(page.locator('.entry .body .lj-lost')).toHaveCount(0);
+  await expect(page.locator('.entry .body')).toContainText('The people have spoken.');
 });

@@ -105,7 +105,7 @@ describe('invariant: an unclosed LJ tag never eats the rest of the entry', () =>
     '<lj comm="somegroup">',
     '<lj-cut text="more">',
     '<lj-embed id="42">',
-    '<lj-poll-1438708>',
+    '<lj-poll-9000001>',
     '<lj-template name="qotd" id="27">',
     '<lj-raw>',
     '<lj-map id="9">', // never seen in this corpus: the point is it still holds

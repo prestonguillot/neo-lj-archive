@@ -196,4 +196,17 @@ CREATE TABLE IF NOT EXISTS entry_embeds (
   fetched_at TEXT,
   PRIMARY KEY (ditemid, idx)
 );
+
+-- What LiveJournal kept on its own servers — polls, Writer's Block prompts —
+-- recovered from its rendered pages by the live audit (DESIGN.md §5.3). The
+-- export has only the placeholder (<lj-poll-N>, <lj-template>); this holds what
+-- it stood for. key is 'poll:<id>' or 'template:<id>'; data is the structured
+-- RecoveredPoll / RecoveredPrompt from core/fetch/ljpage.ts, as JSON.
+CREATE TABLE IF NOT EXISTS lj_recovered (
+  ditemid    INTEGER NOT NULL,
+  key        TEXT NOT NULL,
+  data_json  TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (ditemid, key)
+);
 `;

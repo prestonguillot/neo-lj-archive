@@ -180,3 +180,108 @@ describe('search/data.js', () => {
     expect(window.NEO_SEARCH).toEqual(recs);
   });
 });
+
+describe('search by meaning: the ranking', () => {
+  interface Meaning {
+    meaning(
+      rs: SearchRecord[],
+      q: string,
+      scope: string,
+      sort: string,
+      index: unknown,
+      vector: Float32Array,
+    ): Hit[];
+  }
+  const ns = engine() as unknown as Meaning;
+  const long = 'word '.repeat(40);
+  // One 2-D passage vector per record (scale 1/127, so q = 127 is a unit axis).
+  const index = (vecs: [number, number][]) => ({
+    n: vecs.length,
+    dim: 2,
+    owner: Int32Array.from(vecs.map((_, i) => i)),
+    scale: Float32Array.from(vecs.map(() => 1 / 127)),
+    q: Int8Array.from(vecs.flat()),
+  });
+  const Q = Float32Array.from([1, 0]); // the query points along the first axis
+
+  // catches: ranking by anything but closeness — the record pointing the query's
+  // way must come first.
+  it('ranks the closest in meaning first', () => {
+    const rs = [E('far', '2004-01-01', 't', long), E('near', '2004-01-02', 't', long)];
+    const hits = ns.meaning(
+      rs,
+      'x',
+      'all',
+      'relevance',
+      index([
+        [0, 127],
+        [127, 0],
+      ]),
+      Q,
+    );
+    expect(urls(hits)).toEqual(['near', 'far']);
+  });
+
+  // catches: a throwaway comment winning on a vague match. Equally close, the
+  // three-word one ranks below the one with something in it.
+  it('discounts very short records', () => {
+    const rs = [E('lol', '2004-01-01', 't', 'lol same here'), E('real', '2004-01-02', 't', long)];
+    const hits = ns.meaning(
+      rs,
+      'x',
+      'all',
+      'relevance',
+      index([
+        [127, 0],
+        [127, 0],
+      ]),
+      Q,
+    );
+    expect(urls(hits)[0]).toBe('real');
+  });
+
+  // catches: hybrid scoring lost — a record that actually says the words should
+  // beat an equally close one that doesn't.
+  it('breaks a tie in meaning toward the record with the words', () => {
+    const rs = [
+      E('without', '2004-01-01', 't', long),
+      E('with', '2004-01-02', 't', long + 'pretzels'),
+    ];
+    const hits = ns.meaning(
+      rs,
+      'pretzels',
+      'all',
+      'relevance',
+      index([
+        [127, 0],
+        [127, 0],
+      ]),
+      Q,
+    );
+    expect(urls(hits)[0]).toBe('with');
+  });
+
+  it('respects scope, and returns nothing for an empty query', () => {
+    const rs = [E('e', '2004-01-01', 't', long), C('e#c1', '2004-01-02', 't', long)];
+    const idx = index([
+      [127, 0],
+      [127, 0],
+    ]);
+    expect(urls(ns.meaning(rs, 'x', 'comments', 'relevance', idx, Q))).toEqual(['e#c1']);
+    expect(ns.meaning(rs, '   ', 'all', 'relevance', idx, Q)).toEqual([]);
+  });
+
+  // catches: a passage's score landing on the wrong record — owner must map each
+  // passage to its record, and a record takes its BEST passage.
+  it('scores a record by its best passage', () => {
+    const rs = [E('a', '2004-01-01', 't', long), E('b', '2004-01-02', 't', long)];
+    const idx = {
+      n: 3,
+      dim: 2,
+      owner: Int32Array.from([0, 1, 1]),
+      scale: Float32Array.from([1 / 127, 1 / 127, 1 / 127]),
+      q: Int8Array.from([90, 90, 0, 127, 127, 0]),
+    };
+    expect(urls(ns.meaning(rs, 'x', 'all', 'relevance', idx, Q))[0]).toBe('b');
+  });
+});

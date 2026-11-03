@@ -485,13 +485,37 @@ the page is ready in under 200 ms, and a query takes 1–13 ms in all three engi
 - **With JS off** the form stays hidden and the page says how to `grep`. Search
   is value-add (§13); the floor is still the filesystem.
 
-**Semantic search: planned, not built.** Searching by meaning ("when was I
-fighting with my roommate") needs an embedding model to encode the query in the
-browser. The table above says it's feasible — WebAssembly from in-memory bytes
-and `blob:` workers work everywhere — but it is unverified end to end: an
-existing open-weight model (MiniLM-class, ~25 MB quantized) and its runtime
-would have to load as classic scripts, and keep working for decades. A spike
-comes before any design. Keyword search stays as the fallback either way.
+**Search by meaning — built, and OPTIONAL.** "When was I fighting with my
+roommate" finds what was written in other words. It exists only if the archive
+was built with `neo-lj build --embed`; without that, the search page is the
+keyword search above, byte for byte.
+
+- **The model is `all-MiniLM-L6-v2`, run in the browser by ~300 lines of plain
+  JavaScript** (`core/embed`, shipped as `search/bert.js`): a classic script, no
+  WebAssembly, no workers, no runtime — the only kind of loading `file://`
+  allows everywhere (table above). Checked against the official implementation:
+  identical token ids, identical vectors at f32 (cosine 1.000000); the archive
+  ships int8 weights (30 MB) that stay within 0.996.
+- **Passages, not whole entries.** Each record is split into ~150-word passages,
+  and a record scores as its best one. Vectors are int8, keyed by a hash of the
+  model and the passage text, stored in `archive.db` (`embeddings`), together
+  with the packed browser model (`embed_models`). A passage is embedded once,
+  ever; an edited one is a new key. A plain `neo-lj build` reuses them offline.
+- **Shipped only when complete.** If any passage lacks a vector, the build
+  leaves meaning out and says so — a search that silently skipped some entries
+  would be worse than keyword search, which skips none.
+- **Hybrid ranking**: closeness in meaning, discounted for very short records,
+  plus a small bonus for each query word actually present. Measured on a real
+  journal (11 queries, precision at 10): keyword 0.27, meaning alone 0.45,
+  hybrid 0.55. Larger small models (bge-small, gte-small) scored the same within
+  noise at 1.5x the size and half the speed, so the smallest won.
+- **Build-time embedding uses the official runtime**, `@huggingface/transformers`
+  on onnxruntime-node, as an **optionalDependency**, loaded by dynamic import
+  only under `--embed`. ~3 minutes for the whole journal. The weights packed for
+  the browser are pinned to a revision and a SHA-256. See §15 for why a native
+  dependency is acceptable here.
+- In the browser: the first query decodes the model (~250 ms), later ones take
+  ~75 ms. With JS off, `grep` is still the floor.
 
 ### 7.5 Related entries
 
@@ -644,12 +668,12 @@ lines will get lines executed.
 | M3  | Build: entry pages, calendar, prev/next, tags, themeable                               | **Static archive complete and greppable from `file://`** |
 | M4  | Static value-adds: commenter index, userpic gallery, heatmap, on-this-day-across-years | Shipped, plus Retrospect (moods, music, hours)           |
 | M5  | Keyword search (§7.4) and related entries (§7.5), both static                          | Shipped                                                  |
-| M6  | Semantic search in the browser (§7.4)                                                  | Spike first: an open-weight model running at `file://`   |
+| M6  | Search by meaning in the browser (§7.4), optional                                      | Shipped                                                  |
 
 **Status: M0–M5 done.** M1–M3 met their done-when on the real journal. The live
 audit (`scripts/audit-vs-live.mts`) has checked all 1,547 entries against
 LiveJournal; 1,540 match on text, and the divergent ones stay in
-`archive/audit/state.json` for `--recheck`. M6 has not started.
+`archive/audit/state.json` for `--recheck`. M6 shipped as an optional build step.
 
 **M3 is the finish line for tablestakes** — everything §13 calls baseline, done,
 in the tier that outlives the tooling. M1 and M2 are plumbing; M0–M3 are strictly
@@ -712,6 +736,7 @@ anything but a browser.
 | Commenter index, userpic gallery, activity heatmap, on-this-day-across-years | value-add   | HTML only  |
 | Related entries (§7.5)                                                       | value-add   | HTML only  |
 | Search — entries + comments, scoped (§7.4)                                   | value-add   | **script** |
+| Search by meaning (§7.4), only if built with `--embed`                       | value-add   | **script** |
 
 Note what's _absent_: search is not tablestakes. The archive is plain HTML on
 disk, so `grep` already meets the floor — a search page is convenience, not
@@ -789,6 +814,17 @@ non-issue at ~8,000 rows (§2).
 candidate as of v25.7.0); the API can still shift. Contained by design — it lives
 behind the store module the core/shell split already requires, and the _data_ is
 an ordinary SQLite file. API churn costs one file; the archive is untouched.
+
+### The one native dependency: optional, build-time only
+
+`@huggingface/transformers` (on onnxruntime-node, ~250 MB of native binaries)
+embeds passages for search by meaning. It is everything this section otherwise
+avoids, and accepted anyway, deliberately: the pure-JS engine the browser uses
+would take most of an hour for the whole journal, the runtime takes ~3 minutes,
+and the embedding runs once (vectors are cached in `archive.db`). It is an
+**optionalDependency** loaded only by `neo-lj build --embed`; nothing else
+imports it, `npm install --omit=optional` leaves it out, and the archive never
+needs it — the browser runs the model in plain JS.
 
 ### Toolchain — inherited from `prestonguillot/vibes`
 

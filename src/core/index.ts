@@ -8,3 +8,5 @@ export { DEFAULTS, NEVER_SEND_USEJOURNAL } from './config.js';
 export type { Config } from './config.js';
 export { silentReporter } from './progress.js';
 export type { ProgressEvent, ProgressReporter } from './progress.js';
+export { MODEL, packSafetensors } from './embed/index.js';
+export type { Embedder, ModelPack } from './embed/index.js';

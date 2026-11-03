@@ -3,7 +3,7 @@
 // shape. tsc typechecks the named import and Node then dies on it at startup —
 // the same green-build-red-runtime trap schema.sql set (see templates.ts).
 import ejs from 'ejs';
-import { copyFile, mkdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { renderBody, journalUrl, RENDERER_TEXT_CLASSES, type RenderContext } from './render.js';
@@ -12,6 +12,17 @@ import { STYLE } from './theme.js';
 import { textOf, searchDataJs, SEARCH_JS, type SearchRecord } from './search.js';
 import { relatedEntries } from './related.js';
 import type { Recovered } from '../fetch/ljpage.js';
+import {
+  MODEL,
+  BERT_JS,
+  passages,
+  passageKey,
+  quantize,
+  modelJs,
+  vectorsJs,
+  type Embedder,
+  type ModelPack,
+} from '../embed/index.js';
 import * as T from './templates.js';
 import { Store } from '../store/db.js';
 import type { Config } from '../config.js';
@@ -79,6 +90,12 @@ export interface BuildStats {
   readonly comments: number;
   readonly imagesKept: number;
   readonly imagesLost: number;
+  /** Search by meaning: shipped only when every passage has a vector (§7.4). */
+  readonly semantic: {
+    readonly passages: number;
+    readonly embedded: number;
+    readonly shipped: boolean;
+  };
 }
 
 /**
@@ -269,7 +286,19 @@ const rootFor = (path: string): string => '../'.repeat(path.split('/').length - 
 
 export async function buildSite(
   config: Config,
-  deps: { store: Store; report?: ProgressReporter },
+  deps: {
+    store: Store;
+    report?: ProgressReporter;
+    /**
+     * OPTIONAL, for search by meaning (§7.4): embeds passages that have no vector
+     * yet, and supplies the browser model if archive.db has none. Without it the
+     * build only ever USES vectors already stored, and never computes one.
+     */
+    embed?: {
+      readonly embedder: Embedder;
+      readonly model: () => Promise<{ pack: ModelPack; source: string }>;
+    };
+  },
 ): Promise<BuildStats> {
   const { store } = deps;
   const report = deps.report ?? silentReporter;
@@ -1490,16 +1519,81 @@ export async function buildSite(
   );
   pages++;
 
+  // --- search by meaning (optional, §7.4) --------------------------------
+  // Every record becomes one or more passages; each passage's vector is looked up
+  // by a hash of its text. With an embedder, missing ones are computed and stored
+  // — once, ever. Without one, nothing is computed. The browser files ship only
+  // when EVERY passage has a vector: a search that silently skips some entries
+  // would be worse than keyword search, which skips none.
+  const wanted = searchRecords.flatMap((rec, owner) =>
+    passages(rec.k === 'e' ? rec.t : (rec.s ?? ''), rec.x).map((text) => ({
+      owner,
+      text,
+      key: passageKey(MODEL.name, text),
+    })),
+  );
+  let stored = store.getEmbeddings(MODEL.name);
+  if (deps.embed !== undefined) {
+    const todo = [
+      ...new Map(wanted.filter((w) => !stored.has(w.key)).map((w) => [w.key, w])).values(),
+    ];
+    if (store.getModel(MODEL.name) === undefined) {
+      report({ kind: 'start', task: 'model' });
+      const { pack, source } = await deps.embed.model();
+      store.putModel(pack, source);
+      report({ kind: 'done', task: 'model', summary: `${MODEL.name} packed into archive.db` });
+    }
+    if (todo.length > 0) {
+      report({ kind: 'start', task: 'embeddings', total: todo.length });
+      const BATCH = 32;
+      for (let i = 0; i < todo.length; i += BATCH) {
+        const batch = todo.slice(i, i + BATCH);
+        const vecs = await deps.embed.embedder(batch.map((b) => b.text));
+        store.putEmbeddings(
+          MODEL.name,
+          batch.map((b, j) => ({ passage: b.key, ...quantize(vecs[j]!) })),
+        );
+        report({ kind: 'tick', task: 'embeddings', done: Math.min(i + BATCH, todo.length) });
+      }
+      report({ kind: 'done', task: 'embeddings', summary: `${todo.length} passages embedded` });
+      stored = store.getEmbeddings(MODEL.name);
+    }
+  }
+  const modelPack = store.getModel(MODEL.name);
+  const embedded = wanted.filter((w) => stored.has(w.key)).length;
+  const semantic = modelPack !== undefined && wanted.length > 0 && embedded === wanted.length;
+  if (!semantic && (embedded > 0 || modelPack !== undefined)) {
+    report({
+      kind: 'warn',
+      message: `search by meaning left out: ${wanted.length - embedded} of ${wanted.length} passages have no vector — run: neo-lj build --embed`,
+    });
+  }
+
   // --- search -----------------------------------------------------------
   report({ kind: 'start', task: 'search' });
-  await page('search/index.html', 'Search', render(T.SEARCH, {}));
+  await page('search/index.html', 'Search', render(T.SEARCH, { semantic }));
   await write('search/data.js', searchDataJs(searchRecords));
   await write('search/search.js', SEARCH_JS);
+  if (semantic) {
+    await write('search/bert.js', BERT_JS);
+    await write('search/model.js', modelJs(modelPack));
+    await write(
+      'search/vectors.js',
+      vectorsJs(
+        modelPack.config.hidden,
+        wanted.map((w) => ({ owner: w.owner, ...stored.get(w.key)! })),
+      ),
+    );
+  } else {
+    // A build that leaves meaning out must not leave the last one's ~35 MB behind.
+    for (const f of ['bert.js', 'model.js', 'vectors.js'])
+      await rm(join(site, 'search', f), { force: true });
+  }
   pages++;
   report({
     kind: 'done',
     task: 'search',
-    summary: `${searchRecords.length} entries and comments searchable`,
+    summary: `${searchRecords.length} entries and comments searchable${semantic ? ', by meaning too' : ''}`,
   });
 
   await write('style.css', STYLE);
@@ -1523,5 +1617,12 @@ export async function buildSite(
   }
   report({ kind: 'done', task: 'images', summary: `${copied} images copied into the site` });
 
-  return { pages, entries: entries.length, comments: comments.length, imagesKept, imagesLost };
+  return {
+    pages,
+    entries: entries.length,
+    comments: comments.length,
+    imagesKept,
+    imagesLost,
+    semantic: { passages: wanted.length, embedded, shipped: semantic },
+  };
 }

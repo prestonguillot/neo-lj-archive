@@ -265,7 +265,63 @@ export const SEARCH_JS = String.raw`(function () {
     return segs;
   }
 
-  var api = { norm: norm, fold: fold, terms: terms, search: search, snippet: snippet };
+  // ---- by meaning (optional: only when the build shipped bert.js, model.js,
+  // vectors.js — DESIGN.md §7.4) ---------------------------------------------
+  function decode(b64) {
+    var s = atob(b64), u = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+    return u;
+  }
+  // The model and vectors are decoded on the FIRST meaning query, not at page
+  // load: ~35 MB of base64 shouldn't stand between the reader and the box.
+  function meaningIndex(w) {
+    if (!w.NeoBert || !w.NEO_MODEL || !w.NEO_VECTORS) return null;
+    var M = w.NEO_MODEL, V = w.NEO_VECTORS, vb = decode(V.b64), n = V.n;
+    return {
+      model: w.NeoBert.load({ meta: M.meta, bytes: decode(M.b64), vocab: M.vocab }),
+      n: n, dim: V.dim,
+      owner: new Int32Array(vb.buffer, 0, n),
+      scale: new Float32Array(vb.buffer, n * 4, n),
+      q: new Int8Array(vb.buffer, n * 8, n * V.dim)
+    };
+  }
+  var MSTOP = { a: 1, an: 1, and: 1, at: 1, the: 1, my: 1, to: 1, of: 1, 'for': 1, 'with': 1, 'in': 1, on: 1, i: 1, me: 1, is: 1, was: 1, be: 1, being: 1, going: 1, getting: 1 };
+  // Hybrid: closeness in meaning (best passage), discounted for very short
+  // records — a three-word comment shouldn't win on a vague match — plus a small
+  // bonus for each query word the text really contains. Measured on a real
+  // journal: about twice keyword search's precision at 10, and better than
+  // meaning alone for every model tried.
+  function meaning(records, q, scope, sort, index, vector) {
+    if (norm(q).trim() === '') return [];
+    var v = vector || index.model.embed(q), dim = index.dim;
+    var best = new Float32Array(records.length).fill(-1);
+    for (var c = 0; c < index.n; c++) {
+      var s = 0, o = c * dim;
+      for (var j = 0; j < dim; j++) s += v[j] * index.q[o + j];
+      s *= index.scale[c];
+      var w = index.owner[c];
+      if (s > best[w]) best[w] = s;
+    }
+    var qt = norm(q).replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter(function (t) { return t && !MSTOP[t]; });
+    var hits = [];
+    for (var i = 0; i < records.length; i++) {
+      var r = records[i];
+      if (scope === 'entries' && r.k !== 'e') continue;
+      if (scope === 'comments' && r.k !== 'c') continue;
+      prepare(r);
+      var words = r.x.split(/\s+/).length, cov = 0;
+      for (var k = 0; k < qt.length; k++) if (r._h.indexOf(qt[k]) !== -1) cov++;
+      hits.push({ r: r, i: i, score: best[i] * Math.min(1, Math.sqrt(words / 25)) + 0.12 * (qt.length ? cov / qt.length : 0) });
+    }
+    hits.sort(function (a, b) { return b.score - a.score || a.i - b.i; });
+    hits = hits.slice(0, 100);
+    var byDate = function (a, b) { return a.r.d < b.r.d ? -1 : a.r.d > b.r.d ? 1 : a.i - b.i; };
+    if (sort === 'newest') hits.sort(function (a, b) { return byDate(b, a); });
+    else if (sort === 'oldest') hits.sort(byDate);
+    return hits;
+  }
+
+  var api = { norm: norm, fold: fold, terms: terms, search: search, snippet: snippet, meaning: meaning, meaningIndex: meaningIndex };
   if (typeof window !== 'undefined') window.NeoSearch = api;
   if (typeof document === 'undefined') return;
 
@@ -294,6 +350,8 @@ export const SEARCH_JS = String.raw`(function () {
     if (nojs) nojs.hidden = true;
 
     var hits = [], shown = 0, ts = [], timer = null;
+    var meaningBox = document.getElementById('meaning'), index;
+    var byMeaning = function () { return !!meaningBox && meaningBox.checked; };
 
     function scope() {
       var c = form.querySelector('input[name="in"]:checked');
@@ -306,6 +364,7 @@ export const SEARCH_JS = String.raw`(function () {
       var sc = form.querySelector('input[name="in"][value="' + (p.get('in') || 'all') + '"]');
       if (sc) sc.checked = true;
       if (sortSel && p.get('sort')) sortSel.value = p.get('sort');
+      if (meaningBox) meaningBox.checked = p.get('exact') !== '1';
     }
 
     function writeHash() {
@@ -313,6 +372,7 @@ export const SEARCH_JS = String.raw`(function () {
       if (q.value) p.set('q', q.value);
       if (scope() !== 'all') p.set('in', scope());
       if (sortSel && sortSel.value !== 'relevance') p.set('sort', sortSel.value);
+      if (meaningBox && !meaningBox.checked) p.set('exact', '1');
       var h = p.toString();
       try { history.replaceState(null, '', h ? '#' + h : location.pathname); }
       catch (e) { location.hash = h; }
@@ -353,7 +413,18 @@ export const SEARCH_JS = String.raw`(function () {
 
     function run() {
       ts = terms(q.value);
-      hits = search(data, q.value, scope(), sortSel ? sortSel.value : 'relevance');
+      if (byMeaning() && ts.length > 0) {
+        if (index === undefined) {
+          status.textContent = 'Loading search by meaning\u2026';
+          index = meaningIndex(window);
+        }
+      }
+      hits = byMeaning() && index
+        ? meaning(data, q.value, scope(), sortSel ? sortSel.value : 'relevance', index)
+        : search(data, q.value, scope(), sortSel ? sortSel.value : 'relevance');
+      // By meaning, a result isn't there because of "my" or "the" — highlight only
+      // the words that carry the query.
+      if (byMeaning() && index) ts = ts.filter(function (t) { return !MSTOP[t]; });
       shown = 0;
       list.textContent = '';
       if (ts.length === 0) {
@@ -364,6 +435,7 @@ export const SEARCH_JS = String.raw`(function () {
       var ne = 0, nc = 0;
       for (var i = 0; i < hits.length; i++) { if (hits[i].r.k === 'e') ne++; else nc++; }
       status.textContent = hits.length === 0 ? 'Nothing matches.'
+        : byMeaning() && index ? 'The ' + hits.length + ' closest in meaning: ' + ne + (ne === 1 ? ' entry' : ' entries') + ' and ' + nc + (nc === 1 ? ' comment' : ' comments') + '.'
         : ne + (ne === 1 ? ' entry' : ' entries') + ' and ' + nc + (nc === 1 ? ' comment' : ' comments') + ' match.';
       showMore();
     }

@@ -3,10 +3,10 @@
 Archive a LiveJournal — entries, threaded comments, and **local copies of every
 image** — into a static site you can read offline, forever, **without this tool**.
 
-> **Status: M0–M5 done.** The static archive is complete: entry pages, threaded
+> **Status: M0–M6 done.** The static archive is complete: entry pages, threaded
 > comments, local images and userpics, calendar, tags, people, on-this-day, a
-> Retrospect of the decade, keyword search, and related entries. Next is semantic
-> search in the browser (M6), spike first. See [`DESIGN.md`](./DESIGN.md) for the
+> Retrospect of the decade, search (by words, and optionally by meaning), and
+> related entries. See [`DESIGN.md`](./DESIGN.md) for the
 > design and [§11](./DESIGN.md) for milestones.
 
 ## Why
@@ -35,7 +35,7 @@ tags — all plain HTML. Script is allowed only for value-add, and only where th
 page still works without it:
 
 - **Search** runs in the page, from `file://`, over every entry and comment
-  ([§7.4](./DESIGN.md)). With script off, it tells you to `grep`, and that works
+  ([§7.4](./DESIGN.md)) — by exact words, or optionally by meaning. With script off, it tells you to `grep`, and that works
   forever: `grep -ril photobucket site/entries/`.
 - **Related entries** on every entry page are worked out at build time and
   rendered as plain links ([§7.5](./DESIGN.md)). No script at all.
@@ -57,6 +57,7 @@ npx tsx scripts/audit-vs-live.mts 200       # scrape what the API won't give: us
 neo-lj userpics        # Download the userpics the scrape found.
 neo-lj video-posters   # Poster frames for recovered YouTube embeds.
 neo-lj build           # archive.db -> site/. Plain HTML, opens from file://.
+neo-lj build --embed   # optional: also search by meaning (see below).
 neo-lj status          # What's fetched.
 ```
 
@@ -66,6 +67,13 @@ rebuild. Open `archive/site/index.html`.
 
 `neo-lj classify` (an optional LLM pass over suspect images) is reserved and
 unscheduled; it exits with "not implemented yet".
+
+**Search by meaning** is optional. `neo-lj build --embed` needs the optional
+package `@huggingface/transformers` (installed by default; `npm install
+--omit=optional` skips it), downloads the model once, and embeds the journal in a
+few minutes. The vectors and the model are stored in `archive.db`, so every later
+`neo-lj build` includes it with no model run and no network. In the browser it's
+plain JavaScript, no runtime. Without `--embed`, search is keyword-only.
 
 **Credentials** come from a no-echo prompt or `LJ_USER` / `LJ_PASSWORD` at runtime.
 **Never via flag** — flags land in shell history and `ps`. Nothing is stored: the

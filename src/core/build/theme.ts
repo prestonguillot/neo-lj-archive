@@ -399,7 +399,7 @@ h2 { font-family: var(--display); font-size: 1.15rem; letter-spacing: -.01em; }
 }
 .search .scope { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: .2rem .9rem; }
 .search .scope legend { float: left; margin-right: .6rem; text-transform: uppercase; letter-spacing: .1em; }
-.search .sort { text-transform: uppercase; letter-spacing: .1em; }
+.search .sort, .search .meaning { text-transform: uppercase; letter-spacing: .1em; }
 .search select { font: inherit; text-transform: none; letter-spacing: 0; margin-left: .4rem; background: var(--card); color: var(--ink); border: 1px solid var(--rule); border-radius: var(--radius); }
 .search-help { font-size: 12px; margin: .5rem 0 0; }
 #status { font-family: var(--meta); font-size: 12px; }

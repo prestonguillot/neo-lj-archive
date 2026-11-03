@@ -147,3 +147,60 @@ test.describe('with JavaScript off', () => {
     await expect(page.locator('#nojs')).toContainText('grep');
   });
 });
+
+// Search by meaning, built with a tiny model through the real browser engine.
+// What's checked is the plumbing at file:// — scripts load, the model decodes
+// and runs, results link to real pages, the toggle falls back to exact words —
+// not the quality of a 4-dimensional model.
+test.describe('search by meaning', () => {
+  let sem: Fixture;
+  const semUrl = (rel: string): string => pathToFileURL(join(sem.site, rel)).href;
+  test.beforeAll(async () => {
+    sem = await buildFixture({ semantic: true });
+  });
+  test.afterAll(() => rmSync(sem.dir, { recursive: true, force: true }));
+
+  // catches: the model or vectors failing to load from file:// — a classic-script
+  // global missing, a decode error — which would leave "by meaning" broken.
+  test('runs offline and returns results that open', async ({ page }) => {
+    const problems: string[] = [];
+    page.on('console', (m) => {
+      if (m.type() === 'error') problems.push(m.text());
+    });
+    page.on('pageerror', (e) => problems.push(String(e)));
+    await page.route('http*://**', (r) => r.abort());
+
+    await page.goto(semUrl('search/index.html'));
+    await expect(page.locator('#meaning')).toBeChecked();
+    await page.locator('#q').fill('snack chips');
+    await expect(page.locator('#status')).toContainText('closest in meaning');
+    const first = page.locator('#results li a').first();
+    await expect(first).toBeVisible();
+    const href = await first.getAttribute('href');
+    expect(href).toMatch(/^\.\.\/entries\/\d+\.html/);
+    await first.click();
+    await expect(page.locator('h1')).toBeVisible();
+    expect(problems).toEqual([]);
+  });
+
+  // catches: the toggle doing nothing — unticked, it must be exact-word search
+  // again, AND semantics included.
+  test('unticking it goes back to exact words', async ({ page }) => {
+    await page.goto(semUrl('search/index.html'));
+    await page.locator('#meaning').uncheck();
+    await page.locator('#q').fill('after the cut');
+    await expect(page.locator('#results li')).toHaveCount(1);
+    await expect(page.locator('#status')).toContainText('match');
+  });
+});
+
+// catches: the meaning toggle, or its scripts, appearing on a site built without
+// vectors. The default build must be the keyword page it always was.
+test('without vectors, the search page is keyword-only', async ({ page }) => {
+  await page.goto(url('search/index.html'));
+  await expect(page.locator('#meaning')).toHaveCount(0);
+  const scripts = await page
+    .locator('script[src]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('src')));
+  expect(scripts).toEqual(['data.js', 'search.js']);
+});

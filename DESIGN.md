@@ -1,8 +1,9 @@
 # neo-lj-archive — Design Document
 
-> **Status: APPROVED — implementation started 2026-07-16.** Supersedes the open
-> decisions in `PLAN.md`. Every "open decision" and "open question" from the
-> brief is resolved below. Milestones and progress: §11.
+> **Status: APPROVED — implementation started 2026-07-16; M0–M4 complete.**
+> Supersedes the pre-design brief (`PLAN.md`, removed; see git history). Every
+> "open decision" and "open question" from it is resolved below. Milestones and
+> progress: §11.
 
 ## §1. What this is
 
@@ -15,8 +16,8 @@ The last clause is the design's spine. Everything below bends toward it.
 ## §2. What the spike proved
 
 Before designing anything we verified the protocol still works, on Preston's
-account, in July 2026 (`spike_lj_api.py`, five requests, all green). The
-findings are load-bearing:
+account, in July 2026 (`spike_lj_api.py`, five requests, all green — removed once
+M1 superseded it; see git history). The findings are load-bearing:
 
 | Fact                                      | Value                      | Consequence                                       |
 | ----------------------------------------- | -------------------------- | ------------------------------------------------- |
@@ -32,9 +33,9 @@ findings are load-bearing:
 
 Two of these reshape the project:
 
-**The journal is small.** ~8,000 documents total. For SQLite FTS5 that is a
-rounding error. Search is not a performance problem, so we choose its design on
-durability grounds alone. Likewise, batched `getevents` plus paginated comment
+**The journal is small.** ~8,000 documents total — about 2 MB of text. A browser
+scans that in milliseconds with no index at all (measured: §7.4). Search is not a
+performance problem, so we choose its design on durability grounds alone. Likewise, batched `getevents` plus paginated comment
 export means the entire fetch is on the order of forty requests to LJ. The
 month-long-ban risk documented by ArchiveTeam applies to clients making
 thousands of requests. We can be maximally polite at zero cost, so we will be.
@@ -62,7 +63,7 @@ we are not (§5.1). This is enforced by test, not by convention.
 
 1. **The archive outlives the tool.** Output is plain HTML with relative paths.
    Reading it requires a browser and nothing else. If this repo is deleted and
-   Python stops existing, the archive still opens.
+   Node stops existing, the archive still opens.
 2. **The tool never stores credentials.** Not on disk, not in config, not ever.
 3. **The archive is honest about its gaps.** A lost image is recorded as lost,
    with everything we knew about it, not silently dropped or silently faked.
@@ -324,11 +325,12 @@ fallback — explicitly cut from scope.
 Third-party hosts get their own politeness budget, per-host, with timeouts and
 bounded retries. Image failures never fail the run; they are data.
 
-### 5.3 Build
+### 5.5 Build
 
 Templates → static HTML. String-concatenating HTML across a dozen page types is
 how you get injection bugs and unmaintainable output; use a real template
-engine, whichever one the chosen stack offers.
+engine. That's EJS (§15), and EJS `<%=` is the single owner of escaping — the
+build never pre-escapes what it hands a template.
 
 Output is entirely relative-pathed and opens from `file://`.
 
@@ -387,9 +389,10 @@ not chrome: mood, music, location, the userpic chosen for that specific post,
 the security level, tags, timestamp.
 
 **Themable** means CSS custom properties over semantic markup, with one
-swappable stylesheet. Ship `default.css` (light/dark via
-`prefers-color-scheme`) and a second theme purely to prove the seam is real.
-`--theme path/to.css` swaps it. Not a plugin system.
+swappable stylesheet: the build writes `site/style.css` (light/dark via
+`prefers-color-scheme`) and every page links it. To restyle, replace that file.
+Not a plugin system, and no `--theme` flag — a second theme was planned to prove
+the seam, but one file every page loads already proves it.
 
 ### 7.2 Navigation
 
@@ -407,6 +410,8 @@ swappable stylesheet. Ship `default.css` (light/dark via
   social archive this is arguably the best thing in it.
 - Userpic gallery.
 - Activity heatmap.
+- Search over entries and comments (§7.4).
+- Related entries on every entry page (§7.5).
 
 ### 7.3 Link rewriting
 
@@ -423,34 +428,83 @@ Self-references stop dead-ending.
 Links to _other_ people's LiveJournals are left alone. They're external, they're
 probably dead, and that's not ours to fix.
 
-### 7.4 Search — app tier, not static
+### 7.4 Search — in the static site
 
-**Decision: the static archive has no search. Search is an app feature, running
-SQLite FTS5 against `archive.db` directly.**
+**Decision: search lives in the archive itself, as a page that runs in the
+browser from `file://`. No app, no server.** This reverses the earlier decision
+to make search app-only (Electron + FTS5). That decision was the only real job
+the app had, and the reason given for it — that a browser can't search local
+files — turned out to be about _how_ data is loaded, not whether it can be.
 
-The justification beats every index design: **the static archive is plain HTML on
-disk, and `grep` will always exist.** `grep -ril photobucket site/entries/`
-returns the entries — forever, with no index, no tooling, no runtime, no origin.
-The capability floor is already met by the filesystem. A search page in the
-browser is a _convenience_, not a capability, which makes it value-add by
-definition (§13).
+**`file://`, measured, not assumed** (Playwright, November 2026: Chromium 149,
+Firefox 151, WebKit 26.5):
 
-When search does exist, it covers entries **and** comments, with scoping
-(everything / entries only / comments only) over subject, body, tags, mood,
-music, and location. It runs in the app against the canonical store (§6),
-queried live — no index to prebuild, ship, or keep in sync.
+| From a `file://` page                | Chromium | Firefox | WebKit |
+| ------------------------------------ | -------- | ------- | ------ |
+| classic `<script src>`               | ✓        | ✓       | ✓      |
+| `fetch()` / XHR of a local file      | ✗        | ✓       | ✗      |
+| ES modules (static or `import()`)    | ✗        | ✓       | ✗      |
+| `new Worker('file.js')`              | ✗        | ✓       | ✗      |
+| Worker from a `blob:` URL            | ✓        | ✓       | ✓      |
+| WebAssembly from in-memory bytes     | ✓        | ✓       | ✓      |
+| WebAssembly via `fetch()`            | ✗        | ✓       | ✗      |
+| `crossOriginIsolated` (wasm threads) | ✗        | ✗       | ✗      |
 
-**This deletes two earlier designs.** Prior drafts fought over how to get search
-into the static tier: first SQLite-in-the-browser via WASM (which needs an
-origin, and spawned an "any HTTP server" middle tier to rescue it), then a
-prebuilt inverted index shipped as a `<script src>` JS file (which does work at
-`file://` — script tags predate the origin model). Both were engineering in
-service of a requirement that didn't exist. The static tier doesn't need to be
-searchable by a browser; it needs to be greppable, and it already is.
+So everything the search page loads is a **classic script**. Never
+`type="module"`, never `fetch()`.
 
-Net: no index generation, no `search.html`, no sql.js, no WASM. The static build
-gets materially simpler, and search gets _better_ — a real query engine over live
-data instead of a frozen index.
+**How it works.** The build writes `search/data.js` — one record per entry and
+per comment with words, assigning a global — and `search/search.js`, the engine.
+`search/index.html` loads both. The engine is a straight scan: no index, no
+library. On the real journal (1,547 entries, 6,550 comments) `data.js` is 3.0 MB,
+the page is ready in under 200 ms, and a query takes 1–13 ms in all three engines.
+
+- **What's indexed is what's shown.** Records come from the _rendered_ body
+  (after `renderBody`), never the raw LJ markup, so a hit can't point at text the
+  page doesn't show — `lj user="…"` attributes, a cut's raw tag — and can't miss
+  text it does. Checked in the browser against every record (§10).
+- **Matching:** every word must appear (AND); `"quoted phrases"` stay together;
+  case, accents, and curly quotes are folded. Scope: everything / entries /
+  comments. Sort: best match, newest, oldest. A comment is not matched by the
+  title of the entry it sits under.
+- **Results are built with DOM nodes, never `innerHTML`.** The indexed text is
+  the journal's own words, and an entry that says `<b>` has to show it.
+- **Query state lives in the URL hash**, so a search is linkable and the back
+  button works.
+- **With JS off** the form stays hidden and the page says how to `grep`. Search
+  is value-add (§13); the floor is still the filesystem.
+
+**Semantic search: planned, not built.** Searching by meaning ("when was I
+fighting with my roommate") needs an embedding model to encode the query in the
+browser. The table above says it's feasible — WebAssembly from in-memory bytes
+and `blob:` workers work everywhere — but it is unverified end to end: an
+existing open-weight model (MiniLM-class, ~25 MB quantized) and its runtime
+would have to load as classic scripts, and keep working for decades. A spike
+comes before any design. Keyword search stays as the fallback either way.
+
+### 7.5 Related entries
+
+Each entry page lists up to five others it has the most in common with, with
+the shared words that put each one there. Computed at build time, rendered as
+plain links — no script, no model, as durable as the rest of the HTML.
+
+**TF-IDF cosine**, deliberately lexical. Two entries are related when they share
+words that are _rare_ in the journal — a friend's name, a band, a place. A tag
+counts as a strongly weighted word. Rules, each one a bug it prevents:
+
+- Terms in one entry or in over half of them are left out: they can't link two
+  entries, or can't distinguish any.
+- Vectors are L2-normalised, so a long entry doesn't relate to everything.
+- A link needs **at least two** shared words. One is a coincidence.
+- Only the author's words count. Text the renderer writes — "▶ Watch on
+  YouTube", lost-image markers, LJ-feature notices — is searchable but never
+  makes two entries related (`RENDERER_TEXT_CLASSES` in `render.ts`).
+- Ties break on id, so the same `archive.db` builds the same bytes.
+
+On the real journal, 1,137 of 1,547 entries get at least one link; the rest are
+too short to say what they're about, and get no list rather than a guess. If
+semantic embeddings arrive (§7.4), they replace the vectors; the output stays
+the same.
 
 ## §8. Security posture
 
@@ -471,12 +525,15 @@ reused anywhere.)
 - A `Secret` wrapper whose string and debug representations redact, so the
   credential cannot be printed, logged, or rendered into a stack trace. This is
   the leak that actually happens.
-- Coredumps disabled at startup.
 - `reveal()` is the only accessor, so every use site is greppable.
+- `LJ_PASSWORD` is deleted from the environment on read, so a child process
+  can't inherit it.
 
 **Mitigations we are not pretending to have:** in-process encryption of the
-secret. Whatever key we wrapped it with would sit in the same coredump. That's
-theater; we disable coredumps instead and say so.
+secret — whatever key we wrapped it with would sit in the same memory, so that's
+theater. Nor do we disable coredumps: Node has no `setrlimit`, so the tool relies
+on the OS default (core size 0 on macOS). Only `fetch` ever holds the secret, for
+a run of about forty requests.
 
 **Repo hygiene.** Public repo, MIT licensed, no data or credentials in source
 control, ever. Default output is `./archive/`, which is gitignored — and the
@@ -495,7 +552,7 @@ because the failure mode is publishing a decade of private entries to GitHub.
 | Image 404 / timeout / DNS failure | Record as dead, keep going. Never fails the run.                                             |
 | Image 200 with wrong content-type | Record as dead.                                                                              |
 | Image is a suspected placeholder  | Flag `suspect`, surface for review.                                                          |
-| Malformed entry HTML              | Parse forgivingly (`html5lib`), never drop an entry.                                         |
+| Malformed entry HTML              | Parse forgivingly (parse5), never drop an entry.                                             |
 
 ## §10. Testing
 
@@ -574,16 +631,24 @@ lines will get lines executed.
 | M1  | Fetch: entries + comments → SQLite, resumable                                          | Full journal fetched; re-run is a no-op                  |
 | M2  | Images: extract, download, content-address, auto-classify                              | Every image localized or honestly marked dead            |
 | M3  | Build: entry pages, calendar, prev/next, tags, themeable                               | **Static archive complete and greppable from `file://`** |
-| M4  | Static value-adds: commenter index, userpic gallery, heatmap, on-this-day-across-years | —                                                        |
-| M5  | App: Electron shell, FTS5 search, pipeline from a UI                                   | —                                                        |
+| M4  | Static value-adds: commenter index, userpic gallery, heatmap, on-this-day-across-years | Shipped, plus Retrospect (moods, music, hours)           |
+| M5  | Keyword search (§7.4) and related entries (§7.5), both static                          | Shipped                                                  |
+| M6  | Semantic search in the browser (§7.4)                                                  | Spike first: an open-weight model running at `file://`   |
+
+**Status: M0–M5 done.** M1–M3 met their done-when on the real journal. The live
+audit (`scripts/audit-vs-live.mts`) has checked all 1,547 entries against
+LiveJournal; 1,540 match on text, and the divergent ones stay in
+`archive/audit/state.json` for `--recheck`. M6 has not started.
 
 **M3 is the finish line for tablestakes** — everything §13 calls baseline, done,
 in the tier that outlives the tooling. M1 and M2 are plumbing; M0–M3 are strictly
-ordered, each depending on the last.
+ordered, each depending on the last. Everything after M3 is value-add, and none of
+it may become a prerequisite for reading the archive (§13).
 
-M4 and M5 are both value-add and **mutually independent** — M4 stays static, M5
-is the app tier. Build either, both, or neither, in any order. Nothing in M5 is
-allowed to become a prerequisite for reading the archive (§13's invariant).
+**Retired: the Electron app.** The original M5 was an Electron shell with FTS5
+search and the pipeline behind a UI. Search was its only real job, and it now
+lives in the static site (§7.4). Running a pipeline from a UI has no value for a
+journal that stopped changing in 2010. Retired 2026-11-03.
 
 Scrapbook / Fotobilder is out of scope — Preston has no memory of using it, and
 if any LJ-hosted images do turn up they're ordinary images (§5.2), not a
@@ -592,12 +657,19 @@ milestone.
 ## §12. CLI
 
 ```
-neo-lj fetch      [--user U] [--delay S]     # LJ -> archive.db, resumable
-neo-lj images     [--concurrency N]          # download, hash, auto-classify (tier 1)
-neo-lj classify   [--model M]                # optional LLM pass over suspect hashes
-neo-lj build      [--theme PATH]             # archive.db -> site/
-neo-lj status                                # what's fetched, what's missing
+neo-lj fetch         [--user U] [--delay MS]           # LJ -> archive.db, resumable
+neo-lj images        [--concurrency N] [--timeout MS]  # download, hash, auto-classify (tier 1)
+neo-lj userpics                                        # download userpics the audit scraped
+neo-lj video-posters                                   # poster frames for scraped YouTube embeds
+neo-lj classify                                        # reserved, unscheduled: LLM pass over suspects
+neo-lj build         [--user U]                        # archive.db -> site/
+neo-lj status                                          # what's fetched
 ```
+
+Every command takes `--out DIR` (default `./archive`). The userpic → picid
+mapping and embed URLs aren't in the XML-RPC API, so they're scraped from the
+live pages by `scripts/audit-vs-live.mts`, which must run before `userpics` and
+`video-posters`.
 
 Credentials via no-echo prompt, or `LJ_USER` / `LJ_PASSWORD` env injection for
 non-interactive runs. Never via flag — flags land in shell history and `ps`.
@@ -609,30 +681,30 @@ to prevent:
 
 - **Priority** — _tablestakes_ (baseline; the archive isn't worth having without
   it) vs _value-add_ (good, wanted, not required).
-- **Tier** — _static_ (works with a browser and nothing else) vs _app_ (needs the
-  app installed).
+- **Needs** — _HTML only_ (a browser with script off reads it) vs _script_
+  (needs JavaScript in the page).
 
-They're orthogonal, and most value-add features are perfectly static — a
-commenter index is just a generated page. Only a few genuinely need the app.
+**The invariant: nothing tablestakes may need script.** Value-add may use it,
+and must still leave the page usable without it — the search page explains how
+to `grep`; "On this day" falls back to a fixed date. A baseline feature drifting
+into script is how the archive quietly becomes something that needs a runtime,
+and the durability argument collapses.
 
-**The invariant: nothing tablestakes may be app-tier.** Value-add may live in
-either. The app is explicitly free to do things the static archive cannot — that
-is the _point_ of having an app. What must never happen is a baseline feature
-quietly drifting into the app tier, because that silently makes the static
-archive the degraded one and the durability argument collapses.
+There is no app tier any more (§11, retired). Nothing in the archive needs
+anything but a browser.
 
-| Feature                                                                      | Priority    | Tier    |
-| ---------------------------------------------------------------------------- | ----------- | ------- |
-| Entry pages, full metadata, threaded comments                                | tablestakes | static  |
-| Local images + userpics; dead-image placeholders                             | tablestakes | static  |
-| Calendar (year/month/day), prev/next spine, tag index                        | tablestakes | static  |
-| Commenter index, userpic gallery, activity heatmap, on-this-day-across-years | value-add   | static  |
-| Search — entries + comments, scoped, FTS5 over `archive.db` (§7.4)           | value-add   | **app** |
-| Running fetch / images / build from a UI                                     | value-add   | **app** |
+| Feature                                                                      | Priority    | Needs      |
+| ---------------------------------------------------------------------------- | ----------- | ---------- |
+| Entry pages, full metadata, threaded comments                                | tablestakes | HTML only  |
+| Local images + userpics; dead-image placeholders                             | tablestakes | HTML only  |
+| Calendar (year/month/day), prev/next spine, tag index                        | tablestakes | HTML only  |
+| Commenter index, userpic gallery, activity heatmap, on-this-day-across-years | value-add   | HTML only  |
+| Related entries (§7.5)                                                       | value-add   | HTML only  |
+| Search — entries + comments, scoped (§7.4)                                   | value-add   | **script** |
 
-Note what's _absent_: search is not tablestakes. The static archive is plain HTML
-on disk, so `grep` already meets the floor — a search UI is convenience, not
-capability (§7.4).
+Note what's _absent_: search is not tablestakes. The archive is plain HTML on
+disk, so `grep` already meets the floor — a search page is convenience, not
+capability.
 
 **When a feature's classification is ambiguous, ask — don't infer.** That
 ambiguity is exactly where the invariant gets broken by accident.
@@ -650,7 +722,7 @@ is arguable rather than asserted.
 - **MD5, and the ability to POST XML.** LJ's XML-RPC is not exotic — the spike
   hand-rolled the entire protocol with no libraries. Native XML-RPC support is a
   convenience, not a requirement.
-- **SQLite bindings, with FTS5**, for the canonical store and app-tier search.
+- **SQLite bindings**, for the canonical store.
 - **A template engine.**
 - **A no-echo credential prompt.**
 - **A distribution story.** **Settled: the tool is for Preston; the codebase is
@@ -659,63 +731,48 @@ is arguable rather than asserted.
   have to move mountains to run it. This doesn't weaken §13 — the _archive_
   still has to outlive the toolchain; it's the _app_ that's allowed to be
   disposable.
-- **A path to Electron that isn't a rewrite.** Electron stays optional and
-  deferred, but must not be foreclosed. This is the binding requirement.
 
 ## §15. The stack
 
-**Node + TypeScript. CLI-first. Electron as a later shell, not a port.**
+**Node + TypeScript. A CLI.**
 
 ### Why Node
 
-Not a preference — it's the only candidate satisfying §14's binding requirement.
-**Electron is Node plus a Chromium window.** Pipeline logic written for a Node CLI
-today runs unchanged in an Electron main process later: you add a shell, you don't
-port. Python now and Electron later is a rewrite, or a PyInstaller-sidecar-over-IPC
-arrangement nobody wants. That's the corner; avoiding it picks the stack.
+The original reason was Electron: pipeline code written for a Node CLI runs
+unchanged in an Electron main process. Electron is retired (§11), and the choice
+still holds on its own:
 
-Node's independent fit is good: **parse5** is the reference-grade implementation
-of the HTML5 parsing algorithm (§14's hardest requirement, well served), and
-concurrent fetching against thousands of slow-or-dead hosts is what an event loop
-is for.
+- **parse5** is the reference-grade implementation of the HTML5 parsing
+  algorithm — §14's hardest requirement, well served.
+- Concurrent fetching against thousands of slow-or-dead image hosts is what an
+  event loop is for.
+- **`node:sqlite` is built in** — no native module (below).
+- The site's search engine is JavaScript, so the build and the browser share one
+  language, and unit tests run the exact script the browser runs.
 
 ### The core/shell split — the actual mechanism
 
-Node makes Electron-later _possible_; this makes it _true_. The pipeline is a
-library that knows nothing about how it's driven:
+The pipeline is a library that knows nothing about how it's driven:
 
 ```
 src/core/   fetch, images, build. No console, no process, no argv, no exit.
             Takes a config object and a progress callback. Returns results.
 src/cli/    thin shell: argv, no-echo prompt, progress rendering, exit codes.
-src/app/    (M5) Electron. Same core, second shell.
 ```
 
 **Enforced by lint rule, not convention** — `no-console` and a `process` ban
 under `src/core/**`. Same posture as the `usejournal` ban (§3).
 
-Single package, not workspaces: the boundary is what matters, not the packaging,
-and workspace ceremony for a solo tool is cost without benefit. Split only if
-Electron packaging later forces it.
-
-Nice property: the image-download progress bar _is_ the test of the split. Core
-emits progress events; the CLI renders a bar; Electron later renders a window. If
-core can't reach stdout, the seam is real.
+It was introduced so Electron could be a second shell. It earns its keep without
+that: tests drive core directly — an in-memory store, a reporter that records
+events — with no process to spawn and no output to scrape.
 
 ### `node:sqlite`, not `better-sqlite3`
 
-**This reverses an earlier recommendation whose every argument was wrong.** The
-prior draft claimed `better-sqlite3` because Electron "bundles its own Node and
-you inherit what it ships." Verified July 2026:
-
-| Claim                               | Reality                                                                                                                         |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Electron may not have `node:sqlite` | Electron 42/43/44 bundle Node 24.x (v43.0.0 → **24.17.0**); unflagged since Node v22.13.0                                       |
-| `better-sqlite3` avoids the corner  | **Backwards.** `node:sqlite` isn't a native module → no `electron-rebuild`, no ABI coupling. `better-sqlite3` _creates_ the tax |
-| `node:sqlite` lacks FTS5            | **False.** Verified empirically on SQLite 3.50.4: `MATCH`, prefix queries, `rank`, `snippet()` all work                         |
-
-Performance is a non-issue at ~8,000 rows (§2). A built-in also ages better than
-a native addon, which won't rebuild against a 2032 Node without work.
+`node:sqlite` is built into Node (unflagged since v22.13.0). `better-sqlite3` is a
+native addon, which has to be rebuilt against each Node ABI and won't build
+against a 2032 Node without work; a built-in ages better. Performance is a
+non-issue at ~8,000 rows (§2).
 
 **Honest caveat:** `node:sqlite` is experimental on the LTS lines (release
 candidate as of v25.7.0); the API can still shift. Contained by design — it lives
@@ -756,9 +813,8 @@ a lot of runtime for modest signal. Adopt on request.
 
 ### "Doesn't suck" for a solo user, CLI-first
 
-One command; real progress across the image download; opens the browser at the
-finished archive. That's most of the Electron experience, available at M3 rather
-than after an Electron build. `npx neo-lj` also clears §14's mountains bar.
+Real progress across the image download; prints the path to the finished
+archive's `index.html`. `npx neo-lj` clears §14's mountains bar.
 
 ## Unresolved
 

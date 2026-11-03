@@ -28,8 +28,8 @@ function migrate(db: DatabaseSync): void {
 }
 
 /**
- * The canonical store. SQLite via node:sqlite — no native module, so an Electron
- * build (M5) needs no electron-rebuild (DESIGN.md §15).
+ * The canonical store. SQLite via node:sqlite — a built-in, so there is no
+ * native module to rebuild against a future Node (DESIGN.md §15).
  *
  * node:sqlite is a release candidate, so its API can shift. Everything that
  * touches it lives behind this module: churn costs one file, and the data is an

@@ -6,9 +6,11 @@ import ejs from 'ejs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { renderBody, journalUrl } from './render.js';
+import { renderBody, journalUrl, RENDERER_TEXT_CLASSES, type RenderContext } from './render.js';
 import { resolveAssetUrl } from '../images/extract.js';
 import { STYLE } from './theme.js';
+import { textOf, searchDataJs, SEARCH_JS, type SearchRecord } from './search.js';
+import { relatedEntries } from './related.js';
 import * as T from './templates.js';
 import { Store } from '../store/db.js';
 import type { Config } from '../config.js';
@@ -492,21 +494,18 @@ export async function buildSite(
 
   let pages = 0;
 
-  // --- entries ----------------------------------------------------------
-  report({ kind: 'start', task: 'entries', total: entries.length });
+  // Filled while the entries render, from the RENDERED bodies: what search finds
+  // is exactly what the page shows (§7.4).
+  const searchRecords: SearchRecord[] = [];
 
-  for (let i = 0; i < entries.length; i++) {
-    const e = entries[i]!;
-    const rel = entryPath(e.ditemid);
-    const root = rootFor(rel);
-    const p = parts(e.eventtime);
-
+  // The render context for one entry and its comments.
+  const ctxFor = (e: EntryRow): RenderContext => {
     const entryEmbeds = embedsByEntry.get(e.ditemid) ?? [];
     // The exact base extraction resolved against: the entry's own permalink.
     // Comment images use the same base (extraction keys them by the parent
     // entry's ditemid), and comments render through this same ctx.
     const base = `https://${config.username}.livejournal.com/${e.ditemid}.html`;
-    const ctx = {
+    return {
       // opt_preformatted: LJ leaves this body's newlines alone, so we must too.
       preformatted: /"opt_preformatted"/.test(e.props_json ?? ''),
       embedUrl: (i: number) => entryEmbeds[i],
@@ -515,19 +514,76 @@ export async function buildSite(
       deadReason: (u: string) => dead.get(u),
       username: config.username,
       entryHref: (d: number) => (heldDitemids.has(d) ? entryPath(d) : undefined),
-      root,
+      root: rootFor(entryPath(e.ditemid)),
     };
+  };
+
+  // Bodies render first, all of them: related entries (§7.5) compare every entry
+  // with every other before any entry page can be written.
+  const bodyHtmlOf = new Map(entries.map((e) => [e.itemid, renderBody(e.body, ctxFor(e))]));
+  const related = relatedEntries(
+    entries.map((e) => ({
+      id: e.itemid,
+      // The author's words only: text the renderer wrote is not something two
+      // entries have in common (RENDERER_TEXT_CLASSES).
+      text: `${titleOf(e.subject, e.body)} ${textOf(bodyHtmlOf.get(e.itemid)!, RENDERER_TEXT_CLASSES)}`,
+      tags: tagsByEntry.get(e.itemid) ?? [],
+    })),
+  );
+  const entryByItemid = new Map(entries.map((e) => [e.itemid, e]));
+
+  // --- entries ----------------------------------------------------------
+  report({ kind: 'start', task: 'entries', total: entries.length });
+
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
+    const rel = entryPath(e.ditemid);
+    const root = rootFor(rel);
+    const p = parts(e.eventtime);
+    const ctx = ctxFor(e);
 
     // Threading: real nesting, built from parentid. NULL means top-level — never
     // 0, which is the bug that would have flattened all of it (§5.1).
     const mine = commentsByEntry.get(e.itemid) ?? [];
+    const title = titleOf(e.subject, e.body);
+    const bodyHtml = bodyHtmlOf.get(e.itemid)!;
+    const moodText = e.mood ?? (e.moodid !== null ? moods.get(e.moodid) : undefined);
+    const entryTags = tagsByEntry.get(e.itemid) ?? [];
+    const meta = [moodText, e.music, e.location, ...entryTags]
+      .filter((v): v is string => v !== undefined && v !== null && v !== '')
+      .join(' \u00b7 ');
+    searchRecords.push({
+      k: 'e',
+      u: rel,
+      d: `${p.y}-${pad(p.m)}-${pad(p.d)}`,
+      t: title,
+      ...(meta !== '' ? { m: meta } : {}),
+      x: textOf(bodyHtml),
+    });
     const kids = new Map<number | null, CommentRow[]>();
     for (const c of mine) kids.set(c.parentid, [...(kids.get(c.parentid) ?? []), c]);
 
     const renderComments = (parent: number | null): string =>
       (kids.get(parent) ?? [])
-        .map((c) =>
-          render(T.COMMENT, {
+        .map((c) => {
+          // Deleted comments have no body at all — 217 of them. That is not
+          // an empty comment, and rendering it as one would be a lie (§5.1).
+          const cBody = c.body !== null ? renderBody(c.body, ctx) : '';
+          const cSubject = c.subject !== null ? decodeEntities(c.subject) : '';
+          const cText = textOf(cBody);
+          // Only what has words: a deleted comment's empty shell isn't findable.
+          if (cText !== '' || cSubject !== '') {
+            searchRecords.push({
+              k: 'c',
+              u: `${rel}#c${c.id}`,
+              d: (c.date ?? e.eventtime).slice(0, 10),
+              t: title,
+              w: c.username ?? '',
+              ...(cSubject !== '' ? { s: cSubject } : {}),
+              x: cText,
+            });
+          }
+          return render(T.COMMENT, {
             root,
             id: c.id,
             state: c.state,
@@ -550,17 +606,14 @@ export async function buildSite(
                   : c.state === 'F'
                     ? 'frozen'
                     : '',
-            subject: c.subject !== null ? decodeEntities(c.subject) : '',
-            // Deleted comments have no body at all — 217 of them. That is not
-            // an empty comment, and rendering it as one would be a lie (§5.1).
-            body: c.body !== null ? renderBody(c.body, ctx) : '',
+            subject: cSubject,
+            body: cBody,
             children: renderComments(c.id),
-          }),
-        )
+          });
+        })
         .join('');
 
-    const moodText = e.mood ?? (e.moodid !== null ? moods.get(e.moodid) : undefined);
-    const tags = (tagsByEntry.get(e.itemid) ?? []).map((t) => ({
+    const tags = entryTags.map((t) => ({
       name: t,
       href: root + tagPathVia(tagSlugs, t),
     }));
@@ -573,7 +626,7 @@ export async function buildSite(
     const content = render(T.ENTRY, {
       root,
       pic: entryPic.get(e.ditemid),
-      subject: titleOf(e.subject, e.body),
+      subject: title,
       displayDate: `${MONTHS[p.m - 1]} ${p.d}, ${p.y} — ${p.hh}:${p.mm}`,
       dayHref: root + dayPath(p.y, p.m, p.d),
       security: e.security,
@@ -585,9 +638,20 @@ export async function buildSite(
       music: e.music !== null ? e.music : '',
       location: e.location !== null ? e.location : '',
       tags,
-      body: renderBody(e.body, ctx),
+      body: bodyHtml,
       prev: prevE ? { href: root + entryPath(prevE.ditemid), label: label(prevE) } : null,
       next: nextE ? { href: root + entryPath(nextE.ditemid), label: label(nextE) } : null,
+      related: (related.get(e.itemid) ?? []).map((r) => {
+        const o = entryByItemid.get(r.id)!;
+        const op = parts(o.eventtime);
+        return {
+          href: root + entryPath(o.ditemid),
+          date: `${op.y}-${pad(op.m)}-${pad(op.d)}`,
+          title: titleOf(o.subject, o.body),
+          // Tags are keyed '#tag' in the vectors; shown as the tag they are.
+          why: r.why.join(', '),
+        };
+      }),
       commentCount: mine.length,
       comments: renderComments(null),
     });
@@ -843,7 +907,6 @@ export async function buildSite(
   for (const c of comments)
     if (c.posterid !== null)
       commentsByPoster.set(c.posterid, [...(commentsByPoster.get(c.posterid) ?? []), c]);
-  const entryByItemid = new Map(entries.map((e) => [e.itemid, e]));
 
   const spanOf = (cs: CommentRow[]): string => {
     const ds = cs
@@ -1409,6 +1472,18 @@ export async function buildSite(
     }),
   );
   pages++;
+
+  // --- search -----------------------------------------------------------
+  report({ kind: 'start', task: 'search' });
+  await page('search/index.html', 'Search', render(T.SEARCH, {}));
+  await write('search/data.js', searchDataJs(searchRecords));
+  await write('search/search.js', SEARCH_JS);
+  pages++;
+  report({
+    kind: 'done',
+    task: 'search',
+    summary: `${searchRecords.length} entries and comments searchable`,
+  });
 
   await write('style.css', STYLE);
 

@@ -132,6 +132,20 @@ const LJ_TAG = /^lj-/i;
 const LJ_POLL = /^lj-poll(?:-(\d+))?$/i;
 
 /** Say what the feature was and, where LJ put it in the tag name, which one. */
+/**
+ * Classes on elements whose TEXT this renderer wrote, not the author: "▶ Watch on
+ * YouTube", "image lost" plus the dead URL, LJ-feature notices. Searchable — the
+ * reader sees them — but never evidence that two entries have something in
+ * common; every video entry would relate to every other on "youtube, watch".
+ * Any new marker with its own words belongs on this list.
+ */
+export const RENDERER_TEXT_CLASSES: ReadonlySet<string> = new Set([
+  'play-badge',
+  'embed-lost',
+  'lj-lost',
+  'dead-image',
+]);
+
 function ljLostLabel(tag: string, node: Node): string {
   const poll = LJ_POLL.exec(tag);
   if (poll !== null) {

@@ -4,7 +4,6 @@
  * Not .ejs files on disk: tsc does not copy non-TS assets into dist/, so a
  * template read at runtime builds green, tests green (vitest resolves from
  * src/), then dies with ENOENT on first real use. schema.sql did exactly that.
- * A bundler (Electron, M5) would have the same problem with extra steps.
  *
  * EJS is what prestonguillot/vibes uses (§15); inlining keeps the tool and drops
  * the asset problem.
@@ -47,6 +46,7 @@ window.addEventListener('DOMContentLoaded', function () {
     <p class="counts"><%= entryCount %> entries &middot; <%= commentCount %> comments</p>
     <nav>
       <a href="<%= root %>index.html">Journal</a>
+      <a href="<%= root %>search/index.html">Search</a>
       <a href="<%= root %>calendar/index.html">Calendar</a>
       <a id="otd" href="<%= root %>onthisday/<%= todayHref %>">On this day</a>
       <a href="<%= root %>tags/index.html">Tags</a>
@@ -91,6 +91,17 @@ export const ENTRY = `
   </aside>
 </article>
 
+<% if (related.length) { %>
+<section class="related">
+  <h2>Related</h2>
+  <ul class="entry-list">
+    <% related.forEach(function (r) { %>
+      <li><a href="<%= r.href %>"><span class="d"><%= r.date %></span> <span class="t"><%= r.title %> <span class="why"><%= r.why %></span></span></a></li>
+    <% }) %>
+  </ul>
+</section>
+<% } %>
+
 <nav class="spine">
   <% if (prev) { %><a class="prev" href="<%= prev.href %>">&larr; <%= prev.label %></a><% } else { %><span></span><% } %>
   <% if (next) { %><a class="next" href="<%= next.href %>"><%= next.label %> &rarr;</a><% } %>
@@ -116,6 +127,42 @@ export const COMMENT = `
   <% if (body) { %><div class="body"><%- body %></div><% } %>
   <% if (children) { %><div class="replies"><%- children %></div><% } %>
 </article>
+`;
+
+/**
+ * Search (DESIGN.md §7.4). The form starts hidden and search.js reveals it, so
+ * with JS off the reader sees how to search without it rather than a dead box.
+ * Classic scripts only — modules don't load from file:// in Chromium or WebKit.
+ */
+export const SEARCH = `
+<h1>Search</h1>
+<form class="search" id="search" role="search" hidden>
+  <input id="q" type="search" autocomplete="off" spellcheck="false" autofocus
+    aria-label="Search entries and comments" placeholder="words, or &quot;a phrase&quot;">
+  <div class="search-opts">
+    <fieldset class="scope">
+      <legend>In</legend>
+      <label><input type="radio" name="in" value="all" checked> everything</label>
+      <label><input type="radio" name="in" value="entries"> entries</label>
+      <label><input type="radio" name="in" value="comments"> comments</label>
+    </fieldset>
+    <label class="sort">Sort
+      <select id="sort">
+        <option value="relevance">best match</option>
+        <option value="newest">newest first</option>
+        <option value="oldest">oldest first</option>
+      </select>
+    </label>
+  </div>
+  <p class="search-help muted">Every word has to appear. Quote words to keep them together. Case, accents, and curly quotes don't matter.</p>
+</form>
+<p id="nojs">Search needs JavaScript. Without it, everything is still plain HTML on disk:
+  <code>grep -ril "word" entries/</code> from this folder's parent finds every entry that says it.</p>
+<p id="status" class="muted" aria-live="polite"></p>
+<ol id="results" class="results"></ol>
+<button id="more" type="button" hidden>Show more</button>
+<script src="data.js"></script>
+<script src="search.js"></script>
 `;
 
 export const INDEX = `

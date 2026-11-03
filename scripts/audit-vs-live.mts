@@ -25,30 +25,36 @@
  *          lesson is the whole project's lesson — look at the thing rather than
  *          reason about it from a distance.
  *
- * Auth is a SAVED SESSION, not a password (§8: never store credentials, use them
- * only to mint auth state). Log in once by hand in a real browser:
+ * NO BROWSER. The pages are plain server-rendered HTML, fetched over HTTP and
+ * parsed with parse5 — the same HTML5 algorithm a browser runs. Auth is one
+ * login through LJ's own login form per run, with a cookie jar following the
+ * redirects (including the handoff that gives the journal subdomain its own
+ * session). Password from a no-echo prompt or LJ_PASSWORD; nothing stored.
  *
- *   npx tsx scripts/audit-vs-live.mts --login     # opens a window, you log in
- *   npx tsx scripts/audit-vs-live.mts [n]         # reuses the saved session
+ * Why not the API's session (sessiongenerate)? Measured: www accepts it, the
+ * journal subdomain doesn't — it bounces to login.bml, which bounces back, in a
+ * loop; and the subdomain handoff needs a real web master session, so LJ clears
+ * the cookies. Why not a browser? Playwright's Chromium stopped getting any
+ * response from LJ in November 2026, and saved sessions expire.
  *
- * Scripted logins are why this exists in this shape. A POST to login.bml gets
- * handed the form back — LJ rejects the client, not the credentials — and
- * repeating the attempt while debugging got the web login throttled for a while,
- * despite the account being perfectly fine on XML-RPC. Logging in once and
- * keeping the session avoids both problems and keeps the password out of the
- * codebase entirely.
+ *   npx tsx scripts/audit-vs-live.mts [n] [--recheck]
  *
- * The session file and the report both land under archive/, which is gitignored:
- * one is live auth state, the other is private content.
+ * CALIBRATED EVERY RUN. Before auditing anything, it re-audits a few entries the
+ * browser-based audit already verified — parity, plus their userpics and embed
+ * URLs. If parse5-over-HTTP doesn't reproduce those exactly (JS-built content, a
+ * different layout for a non-browser client, a session that only half works),
+ * the run stops before recording a single verdict. The instrument is checked
+ * against an oracle it didn't produce, every time.
+ *
+ * The report lands under archive/, which is gitignored: it is private content.
  */
-import { chromium } from '@playwright/test';
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { parse } from 'parse5';
 import { renderBody } from '../src/core/build/render.js';
 import { SCHEMA } from '../src/core/store/schema.js';
-
-/** Live auth state. Gitignored with the rest of archive/, never committed. */
-const SESSION = './archive/session.json';
+import { readHidden } from '../src/cli/credentials.js';
+import { Secret } from '../src/core/secret.js';
 
 /**
  * What has already been audited, and how it came out.
@@ -247,52 +253,281 @@ const missingRun = (lj: string, ours: string): number => {
  * throttled while the account stayed perfectly healthy on XML-RPC — so this runs
  * at most once, then every later run reuses the cookies.
  */
-async function login(pw: string): Promise<void> {
-  const b = await chromium.launch();
-  const ctx = await b.newContext();
-  const page = await ctx.newPage();
+// --- the page, as parse5 sees it -------------------------------------------
+//
+// Each helper mirrors one DOM call the browser audit made, with the same
+// semantics: document order, first match, URLs resolved against the page.
+
+interface PNode {
+  nodeName: string;
+  value?: string;
+  attrs?: { name: string; value: string }[];
+  childNodes?: PNode[];
+}
+
+const attrOf = (n: PNode, name: string): string | undefined =>
+  n.attrs?.find((a) => a.name === name)?.value;
+const hasClass = (n: PNode, c: string): boolean =>
+  (attrOf(n, 'class') ?? '').split(/\s+/).includes(c);
+
+/** Every element below n, document order, each with its ancestors (nearest last). */
+function* walk(n: PNode, anc: PNode[] = []): Generator<[PNode, PNode[]]> {
+  for (const c of n.childNodes ?? []) {
+    yield [c, anc];
+    yield* walk(c, [...anc, c]);
+  }
+}
+const first = (n: PNode, pred: (d: PNode, anc: PNode[]) => boolean): PNode | undefined => {
+  for (const [d, anc] of walk(n)) if (pred(d, anc)) return d;
+  return undefined;
+};
+const all = (n: PNode, pred: (d: PNode, anc: PNode[]) => boolean): PNode[] =>
+  [...walk(n)].filter(([d, anc]) => pred(d, anc)).map(([d]) => d);
+
+/** LJ's "Tags:" footer inside the body — excluded, as the browser audit did. */
+const isTags = (n: PNode): boolean => n.nodeName === 'div' && hasClass(n, 'ljtags');
+/** textContent, minus the tags footer. */
+const textOf = (n: PNode): string =>
+  n.nodeName === '#text'
+    ? (n.value ?? '')
+    : isTags(n)
+      ? ''
+      : (n.childNodes ?? []).map(textOf).join('');
+const brsOf = (n: PNode): number =>
+  isTags(n)
+    ? 0
+    : (n.nodeName === 'br' ? 1 : 0) + (n.childNodes ?? []).reduce((s, c) => s + brsOf(c), 0);
+
+/** img.src / iframe.src: the browser hands back an absolute URL; so do we. */
+const srcOf = (n: PNode, base: string): string => {
+  const raw = attrOf(n, 'src');
+  if (raw === undefined || raw === '') return '';
   try {
-    await page.goto('https://www.livejournal.com/login.bml', { waitUntil: 'domcontentloaded' });
+    return new URL(raw, base).href;
+  } catch {
+    return '';
+  }
+};
 
-    // The cookie banner sits over the page and can swallow the click.
-    await page
-      .getByRole('button', { name: /^OK$/i })
-      .click({ timeout: 3000 })
-      .catch(() => {});
+interface Page {
+  body: PNode | undefined;
+  liveBody: string | null;
+  liveBreaks: number;
+  entryPic: { picid: number; userid: number; url: string } | null;
+  commentPics: { commentId: number; picid: number; userid: number; url: string }[];
+  frames: string[];
+}
 
-    // Scope to the REAL login form: the page carries three (search, login,
-    // OpenID) and TWO buttons named action:login. An unscoped click is a coin
-    // flip that posts the OpenID form instead.
-    const form = page.locator('form[action="https://www.livejournal.com/login.bml"]');
-    await form.locator('input[name="user"]').fill(USER);
-    await form.locator('input[name="password"]').fill(pw);
-    await form.locator('button[name="action:login"]').click();
-    await page.waitForLoadState('networkidle');
+const PIC_RE = /l-userpic\.livejournal\.com\/(\d+)\/(\d+)/;
 
-    const authed = (await ctx.cookies()).some((c) => c.name === 'ljloggedin' && c.value.length > 3);
-    if (!authed) {
-      throw new Error(
-        'login rejected. The account is fine (XML-RPC still authenticates) — this is the web ' +
-          'login throttle. Wait a few minutes and re-run.',
-      );
+function readPage(html: string, url: string): Page {
+  const doc = parse(html) as unknown as PNode;
+  // div.entry_text: LJ's own name for the body, read off the markup.
+  const body = first(doc, (d) => d.nodeName === 'div' && hasClass(d, 'entry_text'));
+
+  // '.subcontent .userpicfriends img' — an img under .userpicfriends under
+  // .subcontent. NOT 'img.userpicfriends': LJ puts that class on the parent div.
+  const entryImg = first(doc, (d, anc) => {
+    if (d.nodeName !== 'img') return false;
+    const k = anc.findIndex((a) => hasClass(a, 'subcontent'));
+    return k !== -1 && anc.slice(k + 1).some((a) => hasClass(a, 'userpicfriends'));
+  });
+  const eSrc = entryImg ? srcOf(entryImg, url) : '';
+  const em = PIC_RE.exec(eSrc);
+  const entryPic = em ? { picid: Number(em[1]), userid: Number(em[2]), url: eSrc } : null;
+
+  // [id^="ljcmt"], then the first img.userpiccomment inside each.
+  const commentPics: Page['commentPics'] = [];
+  for (const el of all(doc, (d) => (attrOf(d, 'id') ?? '').startsWith('ljcmt'))) {
+    const dtalkid = Number((attrOf(el, 'id') ?? '').replace('ljcmt', ''));
+    const img = first(el, (d) => d.nodeName === 'img' && hasClass(d, 'userpiccomment'));
+    if (!Number.isFinite(dtalkid) || !img) continue;
+    const src = srcOf(img, url);
+    const m = PIC_RE.exec(src);
+    if (m)
+      commentPics.push({
+        commentId: dtalkid >> 8,
+        picid: Number(m[1]),
+        userid: Number(m[2]),
+        url: src,
+      });
+  }
+
+  // 'div.entry_text iframe' — scoped to the body; every page has chrome iframes.
+  const frames = all(
+    doc,
+    (d, anc) =>
+      d.nodeName === 'iframe' && anc.some((a) => a.nodeName === 'div' && hasClass(a, 'entry_text')),
+  )
+    .map((f) => srcOf(f, url))
+    .filter(Boolean);
+
+  return {
+    body,
+    liveBody: body ? textOf(body) : null,
+    liveBreaks: body ? brsOf(body) : -1,
+    entryPic,
+    commentPics,
+    frames,
+  };
+}
+
+class Banned extends Error {}
+
+/**
+ * The smallest browser that works: a cookie jar and hand-followed redirects.
+ *
+ * LJ's web auth is three cookies it signs ITSELF — ljsession (v1), and
+ * ljloggedin and ljmastersession (v2), each with its own timestamp and
+ * signature — so a client can't assemble them from the API's session; the first
+ * version of this script tried, and every private page bounced to login.bml.
+ * The way in is to hold whatever LJ sets and send it back, as a browser would.
+ */
+class Jar {
+  readonly #c = new Map<string, { value: string; domain: string }>();
+
+  header(url: URL): string {
+    return [...this.#c]
+      .filter(([, c]) => url.hostname === c.domain || url.hostname.endsWith(`.${c.domain}`))
+      .map(([name, c]) => `${name}=${c.value}`)
+      .join('; ');
+  }
+
+  set(name: string, value: string, domain: string): void {
+    this.#c.set(`${name}`, { value, domain: domain.replace(/^\./, '') });
+  }
+
+  take(res: Response, url: URL): void {
+    for (const line of res.headers.getSetCookie()) {
+      const [pair = '', ...attrs] = line.split(';').map((x) => x.trim());
+      const eq = pair.indexOf('=');
+      if (eq <= 0) continue;
+      const name = pair.slice(0, eq);
+      const value = pair.slice(eq + 1);
+      const dom = attrs.find((a) => /^domain=/i.test(a))?.slice(7) ?? url.hostname;
+      const exp = attrs.find((a) => /^expires=/i.test(a))?.slice(8);
+      const maxAge = attrs.find((a) => /^max-age=/i.test(a))?.slice(8);
+      const gone =
+        value === '' || maxAge === '0' || (exp !== undefined && Date.parse(exp) < Date.now());
+      if (gone) this.#c.delete(name);
+      else this.set(name, value, dom);
     }
-    mkdirSync('./archive', { recursive: true });
-    await ctx.storageState({ path: SESSION });
-    console.log(`logged in, session saved -> ${SESSION} (gitignored)`);
-  } finally {
-    await b.close();
+  }
+
+  /** Names only — never values — for the diagnosis when auth fails. */
+  names(): string[] {
+    return [...this.#c.keys()].sort();
+  }
+}
+
+const UA = 'Mozilla/5.0 (compatible; neo-lj-archive audit)';
+
+/**
+ * GET (or POST a form, for the first hop only), following redirects by hand so
+ * every hop's cookies land in the jar. A redirect after a POST is a GET, as a
+ * browser does it.
+ */
+async function getVia(
+  jar: Jar,
+  start: string,
+  form?: URLSearchParams,
+): Promise<{ html: string; hops: string[] }> {
+  let url = new URL(start);
+  let body = form;
+  const hops: string[] = [];
+  for (let n = 0; n < 10; n++) {
+    const res = await fetch(url, {
+      method: body ? 'POST' : 'GET',
+      headers: {
+        Cookie: jar.header(url),
+        'User-Agent': UA,
+        ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded', Referer: url.href } : {}),
+      },
+      ...(body ? { body: body.toString() } : {}),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30_000),
+    });
+    body = undefined;
+    if (res.status === 403)
+      throw new Banned(`HTTP 403 from ${url.href} — LiveJournal says stop. Wait before retrying.`);
+    jar.take(res, url);
+    const loc = res.headers.get('location');
+    if (res.status >= 300 && res.status < 400 && loc !== null) {
+      url = new URL(loc, url);
+      hops.push(`${res.status} -> ${url.origin}${url.pathname}`);
+      continue;
+    }
+    return { html: await res.text(), hops };
+  }
+  throw new Error(`redirect loop from ${start}: ${hops.slice(0, 6).join(' | ')}`);
+}
+
+/** One page, retried on a network blip. A 403 is a ban: stop, never retry (§9). */
+async function getPage(jar: Jar, url: string): Promise<string | null> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return (await getVia(jar, url)).html;
+    } catch (err) {
+      if (err instanceof Banned) throw err;
+      if (attempt === 3) {
+        console.log(`  ${url} SKIPPED — ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+      }
+      await new Promise((res) => setTimeout(res, 3000 * attempt));
+    }
+  }
+  return null;
+}
+
+const pause = (): Promise<void> => new Promise((res) => setTimeout(res, PACE_MS));
+
+/**
+ * Log in through LJ's own login form, over HTTP — what a browser does, minus the
+ * browser. The form takes the password itself (no challenge-response) plus a
+ * CSRF token, lj_form_auth, which is why a bare POST used to get the form handed
+ * back: it has to come from this page, with this page's cookies.
+ *
+ * Exactly ONE attempt. LJ throttles repeated web logins, and retrying a rejected
+ * one is how the account's web login got locked out for a while in July.
+ */
+async function webLogin(jar: Jar, user: string, password: Secret): Promise<void> {
+  const LOGIN = 'https://www.livejournal.com/login.bml';
+  const page = await getVia(jar, LOGIN);
+  await pause();
+  const doc = parse(page.html) as unknown as PNode;
+  const form = first(
+    doc,
+    (d) =>
+      d.nodeName === 'form' &&
+      (attrOf(d, 'action') ?? '').endsWith('//www.livejournal.com/login.bml'),
+  );
+  if (form === undefined) throw new Error('LJ login form not found — the page has changed');
+  const fields = new URLSearchParams();
+  for (const el of all(form, (d) => d.nodeName === 'input' && attrOf(d, 'name') !== undefined)) {
+    const name = attrOf(el, 'name')!;
+    const type = (attrOf(el, 'type') ?? 'text').toLowerCase();
+    // Hidden fields (lj_form_auth, ref, returnto) go back as LJ sent them.
+    if (type === 'hidden' || attrOf(el, 'type') === undefined)
+      fields.set(name, attrOf(el, 'value') ?? '');
+  }
+  fields.set('user', user);
+  fields.set('password', password.reveal());
+  const submit = first(form, (d) => attrOf(d, 'name') === 'action:login');
+  fields.set('action:login', (submit && attrOf(submit, 'value')) ?? 'Log in');
+  if (!fields.get('lj_form_auth'))
+    throw new Error('no lj_form_auth on the login form — not posting');
+
+  const res = await getVia(jar, LOGIN, fields);
+  await pause();
+  if (!jar.names().includes('ljloggedin')) {
+    throw new Error(
+      `LiveJournal did not accept the login (holding ${jar.names().join(', ')}; ` +
+        `${res.hops.join(' | ') || 'no redirect'}). Not retrying — repeated web logins get throttled.`,
+    );
   }
 }
 
 async function main(): Promise<void> {
-  const pw = process.env['LJ_PASSWORD'];
-
-  // Log in ONLY when there's no session to reuse.
-  if (!existsSync(SESSION)) {
-    if (pw === undefined || pw === '') throw new Error('no session yet — set LJ_PASSWORD once');
-    await login(pw);
-  }
-
   const state = loadState();
   const recheck = process.argv.includes('--recheck');
   // --recheck re-runs only the entries that DIVERGED, to confirm a fix. The
@@ -330,24 +565,117 @@ async function main(): Promise<void> {
       `${PACE_MS}ms apart\n`,
   );
 
-  const b = await chromium.launch();
-  let ctx = await b.newContext({ storageState: SESSION });
-  let page = await ctx.newPage();
+  // Log in once through LJ's own form; the jar then holds what a browser would.
+  // The password comes from the no-echo prompt (or LJ_PASSWORD, deleted on read)
+  // and is used for that one POST, nothing else, and never stored.
+  const fromEnv = process.env['LJ_PASSWORD'];
+  delete process.env['LJ_PASSWORD'];
+  const password = new Secret(fromEnv ?? (await readHidden('LiveJournal password (not echoed): ')));
+  const jar = new Jar();
+  await webLogin(jar, USER, password);
+  console.log(`logged in: holding ${jar.names().join(', ')}`);
+  const pageUrl = (ditemid: number): string => `https://${USER}.livejournal.com/${ditemid}.html`;
 
-  // Prove the session is live BEFORE auditing. An expired one silently serves
-  // anonymous pages, and every entry would then look like catastrophic "db loss"
-  // when the truth is only that we were logged out.
-  await page.goto(`https://${USER}.livejournal.com/`, { waitUntil: 'domcontentloaded' });
-  if (!(await ctx.cookies()).some((c) => c.name === 'ljloggedin' && c.value.length > 3)) {
-    await b.close();
-    if (pw === undefined || pw === '')
-      throw new Error('session expired — set LJ_PASSWORD to renew');
-    await login(pw);
-    const b2 = await chromium.launch();
-    ctx = await b2.newContext({ storageState: SESSION });
-    page = await ctx.newPage();
+  // CALIBRATE before trusting anything (see top). Controls are entries the
+  // browser audit verified end to end: parity on text and breaks, and the
+  // userpics and embeds it harvested. Every entry is private, so a control also
+  // proves the API session really opens private pages — an anonymous page has no
+  // div.entry_text and fails here, before any verdict is recorded.
+  const controls = (
+    db
+      .prepare(
+        `SELECT e.ditemid, e.itemid, e.body, u.picid,
+           (SELECT COUNT(*) FROM entry_embeds x WHERE x.ditemid = e.ditemid) AS nEmbeds,
+           (SELECT COUNT(*) FROM comment_userpics cu JOIN comments c ON c.id = cu.comment_id
+             WHERE c.jitemid = e.itemid) AS nCommentPics
+         FROM entries e JOIN entry_userpics u ON u.ditemid = e.ditemid`,
+      )
+      .all() as {
+      ditemid: number;
+      itemid: number;
+      body: string;
+      picid: number;
+      nEmbeds: number;
+      nCommentPics: number;
+    }[]
+  )
+    .filter((c) => state[String(c.ditemid)]?.gap === 0 && state[String(c.ditemid)]?.brDiff === 0)
+    // The richest first: embeds and comment pics are where a parser would differ.
+    .sort(
+      (a, b) => b.nEmbeds - a.nEmbeds || b.nCommentPics - a.nCommentPics || a.ditemid - b.ditemid,
+    )
+    .slice(0, 5);
+  console.log(`calibrating against ${controls.length} entries the browser audit verified…`);
+  const offControl: string[] = [];
+  for (const c of controls) {
+    // Errors propagate: a 403 must stop the run, and a failure must say what it was.
+    const got = await getVia(jar, pageUrl(c.ditemid));
+    await pause();
+    const html = got.html;
+    if (offControl.length === 0 && !html.includes('entry_text')) {
+      // The first failure says why: where LJ sent us, and what we were holding.
+      console.log(`  redirects: ${got.hops.join(' | ') || 'none'}`);
+      console.log(`  holding: ${jar.names().join(', ')}`);
+    }
+    const pg = readPage(html, pageUrl(c.ditemid));
+    const ours = renderBody(c.body, {
+      localFor: () => 'blobs/x/y.jpg',
+      deadReason: () => 'gone',
+      username: USER,
+      entryHref: () => undefined,
+      root: '../',
+    });
+    const why: string[] = [];
+    if (pg.liveBody === null) why.push('no div.entry_text (not logged in?)');
+    else {
+      const gap = missingRun(stream(pg.liveBody), stream(ours));
+      if (gap !== 0) why.push(`text gap ${gap}`);
+      const brDiff = pg.liveBreaks - (ours.match(/<br>/g) ?? []).length;
+      if (brDiff !== 0) why.push(`breaks ${brDiff}`);
+    }
+    if (pg.entryPic?.picid !== c.picid) why.push(`entry pic ${pg.entryPic?.picid} != ${c.picid}`);
+    const wantEmbeds = (
+      db.prepare('SELECT url FROM entry_embeds WHERE ditemid = ? ORDER BY idx').all(c.ditemid) as {
+        url: string;
+      }[]
+    ).map((r) => r.url);
+    // Compared by identity, not string: every embed URL carries an auth_token LJ
+    // mints per session, and the parameter order varies between visits, so the
+    // same video never has the same URL twice. The calibration's first run with
+    // a working login failed on exactly that — 4 embeds vs 4, all "different".
+    const embedKey = (u: string): string => {
+      const x = new URL(u);
+      x.searchParams.delete('auth_token');
+      x.searchParams.sort();
+      return `${x.host}${x.pathname}?${x.searchParams.toString()}`;
+    };
+    if (JSON.stringify(pg.frames.map(embedKey)) !== JSON.stringify(wantEmbeds.map(embedKey)))
+      why.push(`embeds ${pg.frames.length} vs ${wantEmbeds.length}`);
+    const wantPics = new Set(
+      (
+        db
+          .prepare(
+            'SELECT cu.comment_id AS id, cu.picid FROM comment_userpics cu JOIN comments c ON c.id = cu.comment_id WHERE c.jitemid = ?',
+          )
+          .all(c.itemid) as { id: number; picid: number }[]
+      ).map((r) => `${r.id}:${r.picid}`),
+    );
+    const gotPics = new Set(pg.commentPics.map((p) => `${p.commentId}:${p.picid}`));
+    if ([...wantPics].some((k) => !gotPics.has(k)))
+      why.push(`comment pics ${gotPics.size} vs ${wantPics.size}`);
+    console.log(
+      `  control ${c.ditemid}: ${why.length === 0 ? 'matches' : 'OFF — ' + why.join(', ')}`,
+    );
+    if (why.length > 0) offControl.push(String(c.ditemid));
   }
-  console.log('session is live\n');
+  if (controls.length === 0 || offControl.length > 0) {
+    throw new Error(
+      controls.length === 0
+        ? 'no verified entries to calibrate against'
+        : `the HTTP audit does not reproduce the browser audit on ${offControl.join(', ')} — nothing recorded`,
+    );
+  }
+  console.log('calibrated: HTTP + parse5 reproduces the browser audit\n');
 
   const report: Record<string, unknown>[] = [];
   let renderLoss = 0;
@@ -378,25 +706,13 @@ async function main(): Promise<void> {
     // requests a blip is not an edge case, it is a certainty — wifi moves, a VPN
     // reconnects, a laptop lid dips. The entry that failed simply comes back on
     // the next chunk, because an entry is only retired once it has a verdict.
-    let loaded = false;
-    for (let attempt = 1; attempt <= 3 && !loaded; attempt++) {
-      try {
-        await page.goto(`https://${USER}.livejournal.com/${r.ditemid}.html`, {
-          waitUntil: 'domcontentloaded',
-          timeout: 30_000,
-        });
-        loaded = true;
-      } catch (err) {
-        const why = err instanceof Error ? err.message.split('\n')[0] : String(err);
-        if (attempt === 3) {
-          console.log(`${String(i + 1).padStart(3)}/${rows.length} ${r.ditemid} SKIPPED — ${why}`);
-        } else {
-          await page.waitForTimeout(3000 * attempt);
-        }
-      }
-    }
+    const html = await getPage(jar, pageUrl(r.ditemid));
     // No verdict, no state row: it stays unaudited and a later chunk picks it up.
-    if (!loaded) continue;
+    if (html === null) {
+      await pause();
+      continue;
+    }
+    const pg = readPage(html, pageUrl(r.ditemid));
 
     // Is archive.db complete? Ask div.entry_text — LJ's own name for the body,
     // read off the markup rather than inferred. Every heuristic that guessed at
@@ -404,31 +720,14 @@ async function main(): Promise<void> {
     // entries that were fine.
     // Structure, not just characters. Counted on the same cloned subtree the text
     // comes from, so the tags footer is excluded from both.
-    const liveBreaks = await page
-      .locator('div.entry_text')
-      .first()
-      .evaluate((e) => {
-        const c = e.cloneNode(true) as HTMLElement;
-        for (const t of c.querySelectorAll('div.ljtags')) t.remove();
-        return c.querySelectorAll('br').length;
-      })
-      .catch(() => -1);
+    const liveBreaks = pg.liveBreaks;
     const ourBreaks = (renderedHtml.match(/<br>/g) ?? []).length;
     const brDiff = liveBreaks < 0 ? 0 : liveBreaks - ourBreaks;
 
-    const liveBody = await page
-      .locator('div.entry_text')
-      .first()
-      .evaluate((e) => {
-        // div.entry_text also contains LJ's "Tags:" footer, which our archive
-        // renders in the entry HEADER instead. Leaving it in scores every tagged
-        // entry as data loss when the tags are right there on our page, just
-        // somewhere else. Clone so the live DOM is untouched.
-        const c = e.cloneNode(true) as HTMLElement;
-        for (const t of c.querySelectorAll('div.ljtags')) t.remove();
-        return c.textContent ?? '';
-      })
-      .catch(() => null);
+    // div.entry_text also contains LJ's "Tags:" footer, which our archive renders
+    // in the entry HEADER instead — excluded in readPage, or every tagged entry
+    // would score as data loss with its tags right there on our page.
+    const liveBody = pg.liveBody;
     // Compare against our RENDERED text, not the stored source: LJ resolves
     // <lj user="x"> to the word "x" and so do we, while the raw source has only
     // a tag. Source-vs-rendered would score every mention and cut as loss.
@@ -448,38 +747,7 @@ async function main(): Promise<void> {
     // Scoped, NOT every userpic img on the page. #sidebar carries a
     // .defaultuserpic that belongs to the journal, not the entry — harvesting it
     // would stamp the same pic on all 1,547 entries and look entirely plausible.
-    const harvest = await page.evaluate(() => {
-      // NO named function consts in here. tsx/esbuild rewrites `const f = () =>`
-      // into a __name() call for keepNames, and that helper doesn't exist in the
-      // browser, so the callback dies with "__name is not defined". This file
-      // already documents that trap and I walked into it again.
-      const RE = /l-userpic\.livejournal\.com\/(\d+)\/(\d+)/;
-      // '.userpicfriends img', NOT 'img.userpicfriends'. LJ puts this class on the
-      // parent DIV while .userpiccomment sits on the IMG itself — an asymmetry in
-      // their markup that made this match nothing and silently record an entry pic
-      // for zero of 85 entries, while the comment pics kept working perfectly.
-      const entryImg = document.querySelector(
-        '.subcontent .userpicfriends img',
-      ) as HTMLImageElement | null;
-      const em = entryImg ? RE.exec(entryImg.src) : null;
-      const entry =
-        em && entryImg ? { picid: Number(em[1]), userid: Number(em[2]), url: entryImg.src } : null;
-      const comments: { commentId: number; picid: number; userid: number; url: string }[] = [];
-      for (const el of document.querySelectorAll('[id^="ljcmt"]')) {
-        const d = Number(el.id.replace('ljcmt', ''));
-        const img = el.querySelector('img.userpiccomment') as HTMLImageElement | null;
-        if (!Number.isFinite(d) || !img) continue;
-        const m = RE.exec(img.src);
-        if (m)
-          comments.push({
-            commentId: d >> 8,
-            picid: Number(m[1]),
-            userid: Number(m[2]),
-            url: img.src,
-          });
-      }
-      return { entry, comments };
-    });
+    const harvest = { entry: pg.entryPic, comments: pg.commentPics };
     const pics = [
       ...(harvest.entry ? [harvest.entry.url] : []),
       ...harvest.comments.map((c) => c.url),
@@ -508,11 +776,7 @@ async function main(): Promise<void> {
     // SCOPED to the entry body. Every LJ page carries a chrome iframe, which is
     // why the old unscoped count read "embeds:1" on entries that have none —
     // a number that looked like data and was furniture.
-    const frames = await page
-      .$$eval('div.entry_text iframe', (els) =>
-        els.map((e) => (e as HTMLIFrameElement).src).filter(Boolean),
-      )
-      .catch(() => [] as string[]);
+    const frames = pg.frames;
 
     // The URL behind <lj-embed id="42">, which the export never had.
     frames.forEach((url, idx) => {
@@ -549,10 +813,9 @@ async function main(): Promise<void> {
       `${String(i + 1).padStart(3)}/${rows.length} ${r.ditemid} [${r.shape}] ` +
         `pics:${new Set(pics).size} embeds:${frames.length}${flag}`,
     );
-    await page.waitForTimeout(PACE_MS);
+    await pause();
   }
 
-  await b.close();
   saveState(state); // redundant now — state is saved per entry — but harmless
 
   mkdirSync('./archive/audit', { recursive: true });

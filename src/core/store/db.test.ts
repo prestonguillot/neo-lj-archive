@@ -16,7 +16,7 @@ import { parseCommentBody, parseCommentMeta, parseEvents } from '../fetch/parse.
 const fixture = (name: string): string =>
   readFileSync(new URL(`../../../tests/fixtures/${name}`, import.meta.url), 'utf8');
 
-const entries = () => parseEvents(fixture('getevents-2004.xml'));
+const entries = () => parseEvents(fixture('getevents-older.xml'));
 const meta = () => parseCommentMeta(fixture('export-comment-meta.xml'));
 const bodies = () => parseCommentBody(fixture('export-comment-body.xml'));
 

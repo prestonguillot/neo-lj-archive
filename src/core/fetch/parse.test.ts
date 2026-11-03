@@ -19,7 +19,7 @@ const fixture = (name: string): string =>
   readFileSync(new URL(`../../../tests/fixtures/${name}`, import.meta.url), 'utf8');
 
 const recent = () => parseEvents(fixture('getevents-lastn.xml'));
-const old2004 = () => parseEvents(fixture('getevents-2004.xml'));
+const older = () => parseEvents(fixture('getevents-older.xml'));
 const meta = () => parseCommentMeta(fixture('export-comment-meta.xml'));
 const bodies = () => parseCommentBody(fixture('export-comment-body.xml'));
 
@@ -82,7 +82,7 @@ describe('parseCommentMeta', () => {
   it('returns the whole journal index in one page', () => {
     const m = meta();
     expect(m.comments).toHaveLength(6550);
-    expect(m.maxid).toBe(6570);
+    expect(m.maxid).toBe(119686);
   });
 
   it('maps posterids to usernames', () => {
@@ -107,26 +107,27 @@ describe('parseCommentMeta', () => {
 });
 
 describe('nextStartId', () => {
-  // catches: paging by a fixed stride. Ids have gaps — 6,550 comments spread
-  // across ids 1–6,570 — so startid += 1000 walks past real comments and
-  // silently loses them.
+  // catches: paging by a fixed stride. Ids have gaps (the fixture's are spread
+  // over a much wider range than their count), so startid += 1000 walks past
+  // real comments and silently loses them.
   it('advances past the highest id received, not by page size', () => {
-    expect(nextStartId(bodies(), 6570)).toBe(1000);
+    // The body page's highest id is 103002.
+    expect(nextStartId(bodies(), 119686)).toBe(103003);
   });
 
   it('stops when the page reaches maxid', () => {
-    expect(nextStartId([{ id: 6570 } as never], 6570)).toBeUndefined();
+    expect(nextStartId([{ id: 119686 } as never], 119686)).toBeUndefined();
   });
 
   it('stops on an empty page rather than looping forever', () => {
-    expect(nextStartId([], 6570)).toBeUndefined();
+    expect(nextStartId([], 119686)).toBeUndefined();
   });
 });
 
 describe('parseEvents', () => {
   it('reads 20 entries from each slice', () => {
     expect(recent()).toHaveLength(20);
-    expect(old2004()).toHaveLength(20);
+    expect(older()).toHaveLength(20);
   });
 
   // catches: computing ditemid as itemid*256+anum. LJ returns it directly; the
@@ -143,7 +144,7 @@ describe('parseEvents', () => {
   // other 2 lose their mood entirely. §7.1 calls mood exactly the sort of
   // texture people miss.
   it('reads mood and moodid as independent fields', () => {
-    const e = old2004();
+    const e = older();
     expect(e.filter((x) => x.moodid !== undefined)).toHaveLength(4);
     expect(e.filter((x) => x.mood !== undefined)).toHaveLength(2);
     // The point: entries with a moodid but no mood text exist.
@@ -169,7 +170,7 @@ describe('parseEvents', () => {
       return t;
     };
     expect(tally(recent())).toEqual({ private: 9, usemask: 11 });
-    expect(tally(old2004())).toEqual({ private: 20 });
+    expect(tally(older())).toEqual({ private: 20 });
   });
 
   // catches: allowmask read for entries where it is meaningless. LJ only sends

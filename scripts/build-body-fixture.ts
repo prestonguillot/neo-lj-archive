@@ -176,7 +176,11 @@ function main(): void {
 
   const bodies = [...picked.values()]
     .map((r) => ({ kind: r.kind, id: r.id, html: redactHtml(r.html).html }))
-    .sort((a, b) => a.kind.localeCompare(b.kind) || a.id - b.id);
+    .sort((a, b) => a.kind.localeCompare(b.kind) || a.id - b.id)
+    // The real id only labels a test case, and it is the journal's skeleton, so
+    // it doesn't ship: cases are numbered in order instead (scrub-fixtures.ts
+    // remaps the XML fixtures' ids for the same reason).
+    .map((b, i) => ({ ...b, id: i + 1 }));
 
   mkdirSync(new URL('.', OUT), { recursive: true });
   writeFileSync(OUT, JSON.stringify(bodies, null, 2) + '\n', 'utf8');

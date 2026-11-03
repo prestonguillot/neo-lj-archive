@@ -72,7 +72,7 @@ export async function buildFixture(): Promise<Fixture> {
         subject: 'The private one',
         // A poll: LJ kept the questions on its own servers, so this tag is all
         // the export has. It must not render as silence.
-        body: 'So LiveJournal, I ask you:\n<lj-poll-1438708>\nAnd life went on.',
+        body: 'Settle this for me, internet:\n<lj-poll-9000001>\nAnd life went on.',
         security: 'private',
         allowmask: undefined,
         mood: undefined,
@@ -85,6 +85,52 @@ export async function buildFixture(): Promise<Fixture> {
         props: {},
       },
     ]);
+
+    // Content LJ kept server-side, recovered by the live audit: a poll that came
+    // back with results, and a Writer's Block prompt. Invented text throughout.
+    store.putEntries([
+      {
+        itemid: 3,
+        anum: 12,
+        ditemid: 288,
+        eventtime: '2004-03-17 09:00:00',
+        logtime: '2004-03-17 09:00:00',
+        subject: 'Snack summit',
+        body:
+          '<lj-template name="qotd" id="999" />\nMy answer, which I wrote myself.\n' +
+          'Settle the snack question:\n<lj-poll-9000004>\nThe people have spoken.',
+        security: 'public',
+        allowmask: undefined,
+        mood: undefined,
+        moodid: undefined,
+        music: undefined,
+        location: undefined,
+        pictureKeyword: undefined,
+        tags: [],
+        props: {},
+      },
+    ]);
+    store.putRecovered(288, 'poll:9000004', {
+      kind: 'poll',
+      id: 9000004,
+      title: 'Snack vote',
+      meta: 'Open to: All, detailed results viewable to: All. Participants: 7',
+      questions: [
+        {
+          text: 'Which snack wins the night',
+          answers: [
+            { text: 'Chips', count: 3, percent: 42.9 },
+            { text: 'Pretzels', count: 4, percent: 57.1 },
+          ],
+        },
+      ],
+    });
+    store.putRecovered(288, 'template:999', {
+      kind: 'prompt',
+      title: 'Music: A Made-Up Prompt',
+      text: 'What did you listen to first?',
+      url: 'https://www.livejournal.com/writersblock/question?qid=999',
+    });
 
     store.putMoods([{ moodid: 15, name: 'exhausted', parent: undefined }]);
     store.putUsers([

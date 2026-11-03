@@ -239,6 +239,17 @@ plain external links.
 as "cut to the end of the entry". An implementation that requires matched pairs
 mangles those 54.
 
+**Polls and templates are recovered from LJ's pages.** The export has only the
+placeholder; the questions, answers, and prompts lived on LJ's servers. But LJ's
+own rendered page still shows them, and the live audit already reads those
+pages, so it parses them (`core/fetch/ljpage.ts`) into `lj_recovered`, and the
+build renders them as static markup marked "recovered from LiveJournal". LJ
+renders a poll two ways: with results (answers, counts, percentages), or as a
+voting form with no counts, in which case the audit also reads LJ's results view
+of the poll. A placeholder nothing recovered is still named, never dropped. The
+audit renders each entry WITH what it recovered before comparing it against LJ's
+page, so a bad recovery shows up as divergence rather than being trusted.
+
 ### 5.4 The fixture problem this creates
 
 M1's fixtures cannot test any of the above, and the reason generalises.

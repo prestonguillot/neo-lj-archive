@@ -54,6 +54,15 @@ import { parse, serializeOuter } from 'parse5';
 import { renderBody } from '../src/core/build/render.js';
 import { SCHEMA } from '../src/core/store/schema.js';
 import { readHidden } from '../src/cli/credentials.js';
+import {
+  parsePolls,
+  parsePrompt,
+  hasResults,
+  withResults,
+  pollKey,
+  templateKey,
+  type Recovered,
+} from '../src/core/fetch/ljpage.js';
 import { Secret } from '../src/core/secret.js';
 
 /**
@@ -303,7 +312,17 @@ const all = (n: PNode, pred: (d: PNode, anc: PNode[]) => boolean): PNode[] =>
   [...walk(n)].filter(([d, anc]) => pred(d, anc)).map(([d]) => d);
 
 /** LJ's "Tags:" footer inside the body — excluded, as the browser audit did. */
-const isTags = (n: PNode): boolean => n.nodeName === 'div' && hasClass(n, 'ljtags');
+const isTags = (n: PNode): boolean =>
+  (n.nodeName === 'div' && hasClass(n, 'ljtags')) ||
+  // LJ's own chrome around content it kept server-side — the "View Answers"
+  // link, the vote button, a prompt's reply link and count. Its site, not the
+  // entry, and nothing the archive should be expected to reproduce.
+  ['ljpoll-answers', 'ljpoll-submitbox', 'flatquestionjournal-controls'].some((c) =>
+    hasClass(n, c),
+  );
+/** LJ lays out a poll or prompt with <br>s of its own; they aren't the entry's line breaks. */
+const isServerSide = (n: PNode): boolean =>
+  hasClass(n, 'ljpoll') || hasClass(n, 'flatquestionjournal');
 /** textContent, minus the tags footer. */
 const textOf = (n: PNode): string =>
   n.nodeName === '#text'
@@ -312,7 +331,7 @@ const textOf = (n: PNode): string =>
       ? ''
       : (n.childNodes ?? []).map(textOf).join('');
 const brsOf = (n: PNode): number =>
-  isTags(n)
+  isTags(n) || isServerSide(n)
     ? 0
     : (n.nodeName === 'br' ? 1 : 0) + (n.childNodes ?? []).reduce((s, c) => s + brsOf(c), 0);
 
@@ -510,9 +529,12 @@ const pause = (): Promise<void> => new Promise((res) => setTimeout(res, PACE_MS)
  */
 async function webLogin(jar: Jar, user: string, password: Secret): Promise<void> {
   const LOGIN = 'https://www.livejournal.com/login.bml';
-  const page = await getVia(jar, LOGIN);
+  // The GET is safe to retry on a network blip (one timed out mid-run once); the
+  // POST below is not — it stays a single attempt.
+  const loginPage = await getPage(jar, LOGIN);
   await pause();
-  const doc = parse(page.html) as unknown as PNode;
+  if (loginPage === null) throw new Error('could not reach the LJ login page — nothing was sent');
+  const doc = parse(loginPage) as unknown as PNode;
   const form = first(
     doc,
     (d) =>
@@ -703,20 +725,27 @@ async function main(): Promise<void> {
   let picsFound = 0;
   let embedUrls = 0;
 
+  let recoveredCount = 0;
   for (const [i, r] of rows.entries()) {
+    // What this entry's placeholders stand for, once recovered below. The
+    // comparison renders WITH it, so a recovered poll that doesn't match LJ's
+    // page shows up as divergence — the recovery is checked, not trusted.
+    const got = new Map<string, Recovered>(
+      (
+        db.prepare('SELECT key, data_json FROM lj_recovered WHERE ditemid = ?').all(r.ditemid) as {
+          key: string;
+          data_json: string;
+        }[]
+      ).map((x) => [x.key, JSON.parse(x.data_json) as Recovered]),
+    );
     const ctxRender = {
       localFor: () => 'blobs/x/y.jpg',
       deadReason: () => 'gone',
       username: USER,
       entryHref: () => undefined,
       root: '../',
+      recovered: (key: string) => got.get(key),
     };
-
-    // Q2, offline: does the renderer keep what the DB holds?
-    const stored = words(r.body);
-    const renderedHtml = renderBody(r.body, ctxRender);
-    const renderedWords = new Set(words(renderedHtml));
-    const droppedByRenderer = stored.filter((w) => !renderedWords.has(w));
 
     // Retry, then skip. A single transient network error used to end the whole
     // run: ERR_NETWORK_CHANGED on one page threw out of the loop and killed a
@@ -731,6 +760,43 @@ async function main(): Promise<void> {
       continue;
     }
     const pg = readPage(html, pageUrl(r.ditemid));
+
+    // Content LJ kept server-side: recover it from this page (§5.3). A poll the
+    // page shows as a voting form has no counts, so ask LJ's results view of it.
+    const pollIds = [...r.body.matchAll(/<lj-poll-(\d+)/gi)].map((m) => Number(m[1]));
+    const tplIds = [...r.body.matchAll(/<lj-template\b[^>]*\bid="?(\d+)/gi)].map((m) => m[1]!);
+    if (pollIds.length > 0) {
+      for (const poll of parsePolls(html).filter((p) => pollIds.includes(p.id))) {
+        let full = poll;
+        if (!hasResults(poll)) {
+          const res = await getPage(
+            jar,
+            `https://www.livejournal.com/poll/?id=${poll.id}&mode=results`,
+          );
+          await pause();
+          const counted = res === null ? undefined : parsePolls(res).find((p) => p.id === poll.id);
+          if (counted !== undefined && hasResults(counted)) full = withResults(poll, counted);
+          else
+            console.log(`    poll ${poll.id}: no results view — keeping questions without counts`);
+        }
+        got.set(pollKey(full.id), full);
+      }
+    }
+    const prompt = tplIds.length > 0 ? parsePrompt(html) : undefined;
+    if (prompt !== undefined) got.set(templateKey(tplIds[0]!), prompt);
+    for (const [key, data] of got) {
+      db.prepare(
+        `INSERT INTO lj_recovered (ditemid, key, data_json, fetched_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (ditemid, key) DO UPDATE SET data_json = excluded.data_json, fetched_at = excluded.fetched_at`,
+      ).run(r.ditemid, key, JSON.stringify(data), new Date().toISOString());
+    }
+    recoveredCount += pollIds.length + tplIds.length > 0 ? got.size : 0;
+
+    // Q2, offline: does the renderer keep what the DB holds?
+    const stored = words(r.body);
+    const renderedHtml = renderBody(r.body, ctxRender);
+    const renderedWords = new Set(words(renderedHtml));
+    const droppedByRenderer = stored.filter((w) => !renderedWords.has(w));
 
     // Is archive.db complete? Ask div.entry_text — LJ's own name for the body,
     // read off the markup rather than inferred. Every heuristic that guessed at
@@ -872,6 +938,7 @@ async function main(): Promise<void> {
   console.log(`body not found on page:    ${notLocated}`);
   console.log(`userpic urls harvested:    ${picsFound}`);
   console.log(`embed urls harvested:      ${embedUrls}`);
+  console.log(`polls/prompts recovered:   ${recoveredCount}`);
   console.log(`\n--- cumulative across all chunks ---`);
   console.log(`  audited:        ${all.length} of 1547`);
   console.log(`  at parity:      ${parity}`);

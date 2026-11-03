@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { Recovered } from '../fetch/ljpage.js';
 import { readFileSync } from 'node:fs';
 import { renderBody, type RenderContext } from './render.js';
 
@@ -218,13 +219,13 @@ describe('renderBody — LJ markup (§5.3)', () => {
   });
 
   // catches: a poll rendering as nothing. LJ kept polls on its servers, so the
-  // export has only <lj-poll-1438708> — an unknown tag a browser drops silently.
-  // One real entry reads "So LiveJournal, I ask you:" and then the poll; drop it
+  // export has only <lj-poll-9000001> — an unknown tag a browser drops silently.
+  // An entry that asks a question and then hands it to a poll; drop it
   // and the entry trails off into nothing with no sign anything was ever there.
   it('names a poll that LiveJournal kept on its own servers', () => {
-    const html = renderBody('I ask you: <lj-poll-1438708>', ctx());
+    const html = renderBody('Settle this: <lj-poll-9000001>', ctx());
     expect(html).toContain('poll');
-    expect(html).toContain('1438708'); // the id survives, so it stays recoverable
+    expect(html).toContain('9000001'); // the id survives, so it stays recoverable
     expect(html).not.toMatch(/<lj-poll/i);
   });
 
@@ -371,5 +372,137 @@ describe('renderBody — real corpus', () => {
       return sum + (html.match(/class="lj-user"/g) ?? []).length;
     }, 0);
     expect(n).toBe(196);
+  });
+});
+
+describe('renderBody — content LJ kept server-side, recovered', () => {
+  const poll: Recovered = {
+    kind: 'poll',
+    id: 9000005,
+    title: 'Snack vote',
+    meta: 'Open to: All. Participants: 7',
+    questions: [
+      {
+        text: 'Pick one',
+        answers: [
+          { text: 'Chips', count: 3, percent: 42.9 },
+          { text: 'Pretzels', count: 4, percent: 57.1 },
+        ],
+      },
+    ],
+  };
+  const recovered = (map: Record<string, Recovered>) => (key: string) => map[key];
+
+  // catches: a recovered poll still rendering as "LJ kept this" — the recovery
+  // wired up but never consulted, so the archive keeps saying it's lost.
+  it('shows the recovered poll in place of the placeholder', () => {
+    const html = renderBody(
+      'Settle this: <lj-poll-9000005>',
+      ctx({ recovered: recovered({ 'poll:9000005': poll }) }),
+    );
+    expect(html).not.toContain('lj-lost');
+    for (const s of [
+      'Poll #9000005',
+      'Snack vote',
+      'Pick one',
+      'Chips',
+      'Pretzels',
+      '3 (42.9%)',
+      '4 (57.1%)',
+    ])
+      expect(html).toContain(s);
+  });
+
+  // catches: building the poll as an HTML string. Every word came from a web
+  // page; an answer that says "<img onerror=…>" must show as text, never run.
+  it('renders recovered text as text, never markup', () => {
+    const evil: Recovered = {
+      ...poll,
+      questions: [{ text: '<b>q</b>', answers: [{ text: '<img src=x onerror=alert(1)>' }] }],
+    };
+    const html = renderBody(
+      '<lj-poll-9000005>',
+      ctx({ recovered: recovered({ 'poll:9000005': evil }) }),
+    );
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<b>q</b>');
+  });
+
+  // catches: recovery reintroducing the void-tag trap — the replacement must still
+  // hoist what parse5 nested inside the unclosed tag.
+  it('keeps the prose that follows a recovered poll', () => {
+    const html = renderBody(
+      'before <lj-poll-9000005> after the poll',
+      ctx({ recovered: recovered({ 'poll:9000005': poll }) }),
+    );
+    expect(html).toContain('after the poll');
+  });
+
+  // catches: one recovered poll standing in for another — keyed by the id in the
+  // tag, so a different poll on the same page stays named-but-lost.
+  it('only fills the placeholder it belongs to', () => {
+    const html = renderBody(
+      '<lj-poll-9000006>',
+      ctx({ recovered: recovered({ 'poll:9000005': poll }) }),
+    );
+    expect(html).toContain('lj-lost');
+    expect(html).toContain('9000006');
+    expect(html).not.toContain('Chips');
+  });
+
+  // catches: percentages printed as bare numbers. LJ always shows one decimal, so
+  // a zero-vote answer reads "0 (0.0%)"; "0 (0%)" was the one character the live
+  // audit still found missing after recovery.
+  it('formats percentages the way LJ does, one decimal even for zero', () => {
+    const zero: Recovered = {
+      ...poll,
+      questions: [
+        {
+          text: 'Pick one',
+          answers: [
+            { text: 'Nobody', count: 0, percent: 0 },
+            { text: 'All', count: 7, percent: 100 },
+          ],
+        },
+      ],
+    };
+    const html = renderBody(
+      '<lj-poll-9000005>',
+      ctx({ recovered: recovered({ 'poll:9000005': zero }) }),
+    );
+    expect(html).toContain('0 (0.0%)');
+    expect(html).toContain('7 (100.0%)');
+  });
+
+  // catches: a voting-form poll inventing counts it never had.
+  it('shows answers without counts when LJ only showed the form', () => {
+    const form: Recovered = {
+      ...poll,
+      questions: [{ text: 'Pick one', answers: [{ text: 'Chips' }, { text: 'Pretzels' }] }],
+    };
+    const html = renderBody(
+      '<lj-poll-9000005>',
+      ctx({ recovered: recovered({ 'poll:9000005': form }) }),
+    );
+    expect(html).toContain('Chips');
+    expect(html).not.toContain('lj-poll-n');
+  });
+
+  it("shows a recovered Writer's Block prompt for its template", () => {
+    const prompt: Recovered = {
+      kind: 'prompt',
+      title: 'Music: A Made-Up Prompt',
+      text: 'What did you listen to first?',
+      url: 'https://www.livejournal.com/writersblock/question?qid=999',
+    };
+    const html = renderBody(
+      '<lj-template name="qotd" id="999" /> My answer.',
+      ctx({ recovered: recovered({ 'template:999': prompt }) }),
+    );
+    expect(html).not.toContain('lj-lost');
+    expect(html).toContain('Music: A Made-Up Prompt');
+    expect(html).toContain('What did you listen to first?');
+    expect(html).toContain('My answer.');
   });
 });

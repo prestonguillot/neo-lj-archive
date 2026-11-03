@@ -53,10 +53,10 @@ describe('textOf: what the reader sees, as searchable words', () => {
     expect(textOf(html)).toBe(expected);
   });
 
-  // catches: indexing entity source instead of text — "Iron &amp; Wine" is what
-  // the HTML says, "Iron & Wine" is what the reader reads and types.
+  // catches: indexing entity source instead of text — "Salt &amp; Cedar" is what
+  // the HTML says, "Salt & Cedar" is what the reader reads and types.
   it('decodes entities to the characters shown', () => {
-    expect(textOf('Iron &amp; Wine &#39;04 &lt;3')).toBe("Iron & Wine '04 <3");
+    expect(textOf('Salt &amp; Cedar &#39;04 &lt;3')).toBe("Salt & Cedar '04 <3");
   });
 
   // catches: inline formatting splitting a word — bold mid-word is still one word.

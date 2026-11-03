@@ -126,10 +126,10 @@ describe('renderBody — LJ markup (§5.3)', () => {
 
   // catches: an underscore name linking to a hostname that resolves to nothing.
   // LJ maps underscores to hyphens in journal hosts — <lj user="a_b"> goes to
-  // a-b.livejournal.com, because an underscore is not legal in a hostname. 40 of
-  // the 193 people in the real journal have one, so 21% of mentions dead-ended.
-  // Found by diffing entry 353017 against the live page, where exactly the 37
-  // underscore-names were the 37 LJ linked and we didn't.
+  // a-b.livejournal.com, because an underscore is not legal in a hostname. About
+  // a fifth of the people in a real journal had one, so their mentions dead-ended.
+  // Found by diffing an entry against the live page, where exactly the
+  // underscore-names were the ones LJ linked and we didn't.
   it('maps underscores to hyphens in the link host, but not in the name', () => {
     const html = renderBody('<lj user="some_user">', ctx());
     expect(html).toContain('href="https://some-user.livejournal.com/"');
@@ -187,8 +187,8 @@ describe('renderBody — LJ markup (§5.3)', () => {
   // catches: EVERYTHING AFTER A VIDEO BEING DELETED. <lj-embed> opens 28 times in
   // the real corpus and closes zero times — it is void, exactly like <lj user>.
   // parse5 therefore nests the rest of the entry inside it, and replacing the tag
-  // without hoisting its children threw that away: entry 406397 has 3 images and
-  // rendered 1, plus the text after the video, across 6 items. Found by the author
+  // without hoisting its children threw that away: an entry with 3 images
+  // rendered 1, plus lost the text after the video, across 6 entries. Found by the author
   // comparing a built page against the live journal, not by this suite.
   it('keeps the images and prose that follow an unclosed lj-embed', () => {
     const html = renderBody(
@@ -255,8 +255,8 @@ describe('renderBody — LJ markup (§5.3)', () => {
 describe('renderBody — emoticons that look like markup', () => {
   // catches: a broken heart eating the end of the entry. HTML5 sends `</` plus a
   // non-letter into the BOGUS COMMENT state, which swallows to the next `>` — and
-  // with none, the rest of the body. Entry 127053 signs off "</3, Preston" and
-  // lost the heart AND the name. The live LJ page still shows both, so this is a
+  // with none, the rest of the body. An entry signing off "</3" and a name lost
+  // the heart AND the name. The live LJ page still shows both, so this is a
   // real divergence, not fidelity to a 2005 browser.
   //
   // Found by diffing against the live journal — the only oracle in this project

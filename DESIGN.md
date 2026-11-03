@@ -418,7 +418,7 @@ the seam, but one file every page loads already proves it.
 A build-time pass, no server involved. Links inside entries pointing at
 Preston's own journal are rewritten to local relative paths.
 
-An LJ permalink carries the `ditemid` (`evilgoatbob.livejournal.com/12345.html`
+An LJ permalink carries the `ditemid` (`username.livejournal.com/12345.html`
 → ditemid 12345), and `entries.ditemid` is stored directly from LJ (§5.1), so
 this is a lookup, not arithmetic. `itemid = ditemid >> 8` holds, but deriving it
 is unnecessary and would be one more place to be subtly wrong.

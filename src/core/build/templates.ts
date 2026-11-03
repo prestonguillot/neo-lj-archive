@@ -146,6 +146,7 @@ export const SEARCH = `
       <label><input type="radio" name="in" value="entries"> entries</label>
       <label><input type="radio" name="in" value="comments"> comments</label>
     </fieldset>
+    <% if (semantic) { %><label class="meaning"><input type="checkbox" id="meaning" checked> by meaning</label><% } %>
     <label class="sort">Sort
       <select id="sort">
         <option value="relevance">best match</option>
@@ -154,7 +155,7 @@ export const SEARCH = `
       </select>
     </label>
   </div>
-  <p class="search-help muted">Every word has to appear. Quote words to keep them together. Case, accents, and curly quotes don't matter.</p>
+  <p class="search-help muted"><% if (semantic) { %>By meaning: finds what you describe even when it was written in other words. Untick it to match exact words — then every word has to appear, and quotes keep words together.<% } else { %>Every word has to appear. Quote words to keep them together. Case, accents, and curly quotes don't matter.<% } %></p>
 </form>
 <p id="nojs">Search needs JavaScript. Without it, everything is still plain HTML on disk:
   <code>grep -ril "word" entries/</code> from this folder's parent finds every entry that says it.</p>
@@ -162,6 +163,9 @@ export const SEARCH = `
 <ol id="results" class="results"></ol>
 <button id="more" type="button" hidden>Show more</button>
 <script src="data.js"></script>
+<% if (semantic) { %><script src="bert.js"></script>
+<script src="model.js"></script>
+<script src="vectors.js"></script><% } %>
 <script src="search.js"></script>
 `;
 

@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { Recovered } from '../fetch/ljpage.js';
+import type { ModelPack } from '../embed/index.js';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { SCHEMA } from './schema.js';
 import { dirname, join } from 'node:path';
@@ -184,6 +185,85 @@ export class Store {
         for (const t of e.tags) addTag.run(e.itemid, t);
       }
     });
+  }
+
+  /** The browser model for search by meaning (schema: embed_models). */
+  putModel(p: ModelPack, source: string, now = new Date().toISOString()): void {
+    this.#db
+      .prepare(
+        `INSERT INTO embed_models (name, source, config_json, meta_json, vocab_json, pack, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (name) DO UPDATE SET source = excluded.source, config_json = excluded.config_json,
+           meta_json = excluded.meta_json, vocab_json = excluded.vocab_json, pack = excluded.pack,
+           fetched_at = excluded.fetched_at`,
+      )
+      .run(
+        p.name,
+        source,
+        JSON.stringify(p.config),
+        JSON.stringify(p.tensors),
+        JSON.stringify(p.vocab),
+        p.bytes,
+        now,
+      );
+  }
+
+  getModel(name: string): ModelPack | undefined {
+    const r = this.#db
+      .prepare('SELECT config_json, meta_json, vocab_json, pack FROM embed_models WHERE name = ?')
+      .get(name) as
+      { config_json: string; meta_json: string; vocab_json: string; pack: Uint8Array } | undefined;
+    if (r === undefined) return undefined;
+    return {
+      name,
+      config: JSON.parse(r.config_json) as ModelPack['config'],
+      tensors: JSON.parse(r.meta_json) as ModelPack['tensors'],
+      vocab: JSON.parse(r.vocab_json) as string[],
+      bytes: new Uint8Array(r.pack),
+    };
+  }
+
+  /** Passage vectors, int8 with one scale each (schema: embeddings). One transaction. */
+  putEmbeddings(
+    model: string,
+    rows: readonly { passage: string; scale: number; q: Int8Array }[],
+  ): void {
+    const st = this.#db.prepare(
+      `INSERT INTO embeddings (model, passage, scale, vec) VALUES (?, ?, ?, ?)
+       ON CONFLICT (model, passage) DO UPDATE SET scale = excluded.scale, vec = excluded.vec`,
+    );
+    this.#db.exec('BEGIN');
+    try {
+      for (const r of rows)
+        st.run(
+          model,
+          r.passage,
+          r.scale,
+          new Uint8Array(r.q.buffer, r.q.byteOffset, r.q.byteLength),
+        );
+      this.#db.exec('COMMIT');
+    } catch (e) {
+      this.#db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  getEmbeddings(model: string): Map<string, { scale: number; q: Int8Array }> {
+    const out = new Map<string, { scale: number; q: Int8Array }>();
+    for (const r of this.#db
+      .prepare('SELECT passage, scale, vec FROM embeddings WHERE model = ?')
+      .all(model) as {
+      passage: string;
+      scale: number;
+      vec: Uint8Array;
+    }[]) {
+      const b = new Uint8Array(r.vec);
+      out.set(r.passage, {
+        scale: r.scale,
+        q: new Int8Array(b.buffer, b.byteOffset, b.byteLength),
+      });
+    }
+    return out;
   }
 
   /** Content LJ kept server-side, recovered from its pages (schema: lj_recovered). */

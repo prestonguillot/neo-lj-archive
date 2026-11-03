@@ -9,6 +9,7 @@ import { buildSite } from '../core/build/index.js';
 import { sync } from '../core/fetch/sync.js';
 import { Store } from '../core/store/db.js';
 import { renderProgress } from './progress.js';
+import { semanticDeps, MissingOptionalPackage } from './embedder.js';
 import { resolveCredentials } from './credentials.js';
 
 // node:sqlite is experimental on the LTS lines, and Node says so on every run.
@@ -184,7 +185,11 @@ program
   .description('archive.db -> site/. Plain HTML, opens from file://.')
   .option('-u, --user <username>', 'LJ username (for resolving self-links)')
   .option('-o, --out <dir>', 'output directory', DEFAULTS.outputDir)
-  .action(async (opts: { user?: string; out: string }) => {
+  .option(
+    '--embed',
+    'also compute vectors for search by meaning (optional; needs @huggingface/transformers, downloads the model once)',
+  )
+  .action(async (opts: { user?: string; out: string; embed?: boolean }) => {
     const store = Store.open(opts.out);
     try {
       if (store.stats().entries === 0) {
@@ -209,12 +214,30 @@ program
         imageTimeoutMs: DEFAULTS.imageTimeoutMs,
       };
 
-      const stats = await buildSite(config, { store, report: renderProgress() });
+      // Optional: only --embed loads the model package, and only if installed.
+      let embed;
+      if (opts.embed === true) {
+        try {
+          embed = await semanticDeps(opts.out);
+        } catch (e) {
+          if (e instanceof MissingOptionalPackage) {
+            console.error(e.message);
+            process.exit(2);
+          }
+          throw e;
+        }
+      }
+      const stats = await buildSite(config, {
+        store,
+        report: renderProgress(),
+        ...(embed !== undefined ? { embed } : {}),
+      });
 
       console.log(
         `\n${stats.pages} pages: ${stats.entries} entries, ${stats.comments} comments, ` +
           `${stats.imagesKept} images (${stats.imagesLost} marked lost)`,
       );
+      if (stats.semantic.shipped) console.log('Search by meaning: included.');
       console.log(`\nOpen it: ${opts.out}/site/index.html`);
     } finally {
       store.close();

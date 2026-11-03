@@ -202,6 +202,31 @@ CREATE TABLE IF NOT EXISTS entry_embeds (
 -- export has only the placeholder (<lj-poll-N>, <lj-template>); this holds what
 -- it stood for. key is 'poll:<id>' or 'template:<id>'; data is the structured
 -- RecoveredPoll / RecoveredPrompt from core/fetch/ljpage.ts, as JSON.
+-- Search by meaning (DESIGN.md §7.4) — OPTIONAL. Filled only by
+-- \`neo-lj build --embed\`; without these rows the site's search is keyword-only.
+--
+-- The model, packed for the browser (core/embed), so later builds need no
+-- network and no runtime: archive.db holds everything the site is built from.
+CREATE TABLE IF NOT EXISTS embed_models (
+  name        TEXT PRIMARY KEY,
+  source      TEXT NOT NULL,   -- repo@revision the weights came from
+  config_json TEXT NOT NULL,
+  meta_json   TEXT NOT NULL,   -- tensor table
+  vocab_json  TEXT NOT NULL,
+  pack        BLOB NOT NULL,
+  fetched_at  TEXT NOT NULL
+);
+
+-- One vector per PASSAGE, keyed by a hash of the model and the passage text, so
+-- a passage is embedded once ever, and an edited one is simply a new key.
+CREATE TABLE IF NOT EXISTS embeddings (
+  model      TEXT NOT NULL,
+  passage    TEXT NOT NULL,    -- core/embed passageKey()
+  scale      REAL NOT NULL,
+  vec        BLOB NOT NULL,    -- int8[dim]
+  PRIMARY KEY (model, passage)
+);
+
 CREATE TABLE IF NOT EXISTS lj_recovered (
   ditemid    INTEGER NOT NULL,
   key        TEXT NOT NULL,

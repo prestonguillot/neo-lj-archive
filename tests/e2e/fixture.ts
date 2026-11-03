@@ -6,6 +6,8 @@ import { Store } from '../../src/core/store/db.js';
 import { buildSite } from '../../src/core/build/index.js';
 import { Secret } from '../../src/core/secret.js';
 import type { CommentMeta, CommentBody } from '../../src/core/fetch/types.js';
+import { MODEL } from '../../src/core/embed/index.js';
+import { tinyPack, tinyEmbedder } from '../support/tiny-model.js';
 
 /**
  * A synthetic archive, built through the real code path (DESIGN.md §10).
@@ -33,7 +35,11 @@ export interface Fixture {
   readonly site: string;
 }
 
-export async function buildFixture(): Promise<Fixture> {
+/**
+ * semantic: also build search by meaning, with a tiny seeded model run through
+ * the real browser engine — the plumbing end to end, not the model's quality.
+ */
+export async function buildFixture(opts: { semantic?: boolean } = {}): Promise<Fixture> {
   const dir = mkdtempSync(join(tmpdir(), 'neo-lj-e2e-'));
   const store = Store.open(dir);
 
@@ -246,7 +252,18 @@ export async function buildFixture(): Promise<Fixture> {
         imageConcurrency: 1,
         imageTimeoutMs: 1000,
       },
-      { store },
+      opts.semantic === true
+        ? (() => {
+            const pack = { ...tinyPack(), name: MODEL.name };
+            return {
+              store,
+              embed: {
+                embedder: tinyEmbedder(pack).embedder,
+                model: async () => ({ pack, source: 'tiny test model' }),
+              },
+            };
+          })()
+        : { store },
     );
   } finally {
     store.close();
